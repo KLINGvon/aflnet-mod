@@ -888,7 +888,6 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
      *                           结束修改                            *
      *****************************************************************/
   }
-  }
 
   //Update others no matter the new seed leads to interesting state sequence or not
 
