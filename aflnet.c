@@ -944,7 +944,7 @@ region_t* extract_requests_ftp(unsigned char* buf, unsigned int buf_size, unsign
    * 修改后的代码: 使用容量变量进行初始分配 (MODIFIED CODE) *
    *******************************************************/
   u32 region_capacity = INITIAL_REGION_CAPACITY;
-  region_t *regions = (region_t *)ck_alloc(region_capacity * sizeof(region_t));
+  regions = (region_t *)ck_alloc(region_capacity * sizeof(region_t));
   /*******************************************************
    *                        结束修改                         *
    *******************************************************/
