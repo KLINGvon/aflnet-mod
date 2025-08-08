@@ -11,6 +11,15 @@
 #include "alloc-inl.h"
 #include "aflnet.h"
 
+/*******************************************************
+ * 新增代码: 用于动态数组的初始容量 (NEW CODE) *
+ *******************************************************/
+#define INITIAL_STATE_CAPACITY 16
+#define INITIAL_REGION_CAPACITY 16
+/*******************************************************
+ *                      结束新增代码                    *
+ *******************************************************/
+
 // Mapping from original state IDs to compact IDs starting from 1
 
 static u32 message_code_counter = 0;
@@ -931,6 +940,15 @@ region_t* extract_requests_ftp(unsigned char* buf, unsigned int buf_size, unsign
   region_t *regions = NULL;
   char terminator[2] = {0x0D, 0x0A};
 
+  /*******************************************************
+   * 修改后的代码: 使用容量变量进行初始分配 (MODIFIED CODE) *
+   *******************************************************/
+  u32 region_capacity = INITIAL_REGION_CAPACITY;
+  region_t *regions = (region_t *)ck_alloc(region_capacity * sizeof(region_t));
+  /*******************************************************
+   *                        结束修改                         *
+   *******************************************************/
+
   mem=(char *)ck_alloc(mem_size);
 
   unsigned int cur_start = 0;
@@ -942,7 +960,12 @@ region_t* extract_requests_ftp(unsigned char* buf, unsigned int buf_size, unsign
     //Check if the last two bytes are 0x0D0A
     if ((mem_count > 1) && (memcmp(&mem[mem_count - 1], terminator, 2) == 0)) {
       region_count++;
-      regions = (region_t *)ck_realloc(regions, region_count * sizeof(region_t));
+      
+      if (region_count >= region_capacity) {
+        region_capacity *= 2;
+        regions = (region_t *)ck_realloc(regions, region_capacity * sizeof(region_t));
+      }
+
       regions[region_count - 1].start_byte = cur_start;
       regions[region_count - 1].end_byte = cur_end;
       regions[region_count - 1].state_sequence = NULL;
@@ -958,7 +981,15 @@ region_t* extract_requests_ftp(unsigned char* buf, unsigned int buf_size, unsign
       //Check if the last byte has been reached
       if (cur_end == buf_size - 1) {
         region_count++;
-        regions = (region_t *)ck_realloc(regions, region_count * sizeof(region_t));
+        
+        /*******************************************************
+         * 修改后的代码: 同样应用于末尾处理 (MODIFIED CODE)     *
+         *******************************************************/
+        if (region_count >= region_capacity) {
+            region_capacity *= 2;
+            regions = (region_t *)ck_realloc(regions, region_capacity * sizeof(region_t));
+        }
+
         regions[region_count - 1].start_byte = cur_start;
         regions[region_count - 1].end_byte = cur_end;
         regions[region_count - 1].state_sequence = NULL;
@@ -978,7 +1009,7 @@ region_t* extract_requests_ftp(unsigned char* buf, unsigned int buf_size, unsign
   //in case region_count equals zero, it means that the structure of the buffer is broken
   //hence we create one region for the whole buffer
   if ((region_count == 0) && (buf_size > 0)) {
-    regions = (region_t *)ck_realloc(regions, sizeof(region_t));
+    // regions = (region_t *)ck_realloc(regions, sizeof(region_t));
     regions[0].start_byte = 0;
     regions[0].end_byte = buf_size - 1;
     regions[0].state_sequence = NULL;
@@ -2124,10 +2155,15 @@ unsigned int* extract_response_codes_ftp(unsigned char* buf, unsigned int buf_si
   unsigned int state_count = 0;
   char terminator[2] = {0x0D, 0x0A};
 
+  /*******************************************************
+   * 修改后的代码: 使用容量变量进行初始分配 (MODIFIED CODE) *
+   *******************************************************/
+  u32 state_capacity = INITIAL_STATE_CAPACITY;
+
   mem=(char *)ck_alloc(mem_size);
 
   state_count++;
-  state_sequence = (unsigned int *)ck_realloc(state_sequence, state_count * sizeof(unsigned int));
+  state_sequence = (unsigned int *)ck_alloc(state_capacity * sizeof(unsigned int));
   state_sequence[state_count - 1] = 0;
 
   while (byte_count < buf_size) {
@@ -2145,7 +2181,15 @@ unsigned int* extract_response_codes_ftp(unsigned char* buf, unsigned int buf_si
       message_code = get_mapped_message_code(message_code);
 
       state_count++;
-      state_sequence = (unsigned int *)ck_realloc(state_sequence, state_count * sizeof(unsigned int));
+      
+      /*******************************************************
+       * 修改后的代码: 摊销式大小调整逻辑 (MODIFIED CODE)     *
+       *******************************************************/
+      if (state_count >= state_capacity) {
+        state_capacity *= 2;
+        state_sequence = (unsigned int *)ck_realloc(state_sequence, state_capacity * sizeof(unsigned int));
+      }
+
       state_sequence[state_count - 1] = message_code;
       mem_count = 0;
     } else {
