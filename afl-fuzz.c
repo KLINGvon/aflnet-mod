@@ -240,15 +240,6 @@ static s32 cpu_aff = -1;       	      /* Selected CPU core                */
 
 static FILE* plot_file;               /* Gnuplot output file              */
 
-/*****************************************************
- * 新增代码: 用于延迟 .dot 文件写入的变量和宏 (NEW CODE) *
- *****************************************************/
-static u64 last_ipsm_dot_ms;          /* Last time ipsm.dot was written   */
-#define IPSM_DOT_UPDATE_SEC 30        /* Update interval in seconds       */
-/*****************************************************
- *                      结束新增代码                    *
- *****************************************************/
-
 struct queue_entry {
 
   u8* fname;                          /* File name for the test case      */
@@ -425,9 +416,6 @@ kliter_t(lms) *M2_prev, *M2_next;
 //Function pointers pointing to Protocol-specific functions
 unsigned int* (*extract_response_codes)(unsigned char* buf, unsigned int buf_size, unsigned int* state_count_ref) = NULL;
 region_t* (*extract_requests)(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref) = NULL;
-
-static u64 get_cur_time(void);
-static void write_ipsm_dot_file(void);
 
 /* Initialize the implemented state machine as a graphviz graph */
 void setup_ipsm()
@@ -879,17 +867,18 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
     }
 
     //Update the dot file
-    /*****************************************************************
-     * 修改后的代码: 检查时间间隔，如果满足条件则更新 .dot 文件 (MODIFIED CODE) *
-     *****************************************************************/
-    /* Periodically update the .dot file, not on every single change. */
-    u64 cur_ms = get_cur_time();
-    if (cur_ms - last_ipsm_dot_ms > IPSM_DOT_UPDATE_SEC * 1000) {
-      write_ipsm_dot_file();
+    s32 fd;
+    u8* tmp;
+    tmp = alloc_printf("%s/ipsm.dot", out_dir);
+    fd = open(tmp, O_WRONLY | O_CREAT, 0600);
+    if (fd < 0) {
+      PFATAL("Unable to create %s", tmp);
+    } else {
+      ipsm_dot_file = fdopen(fd, "w");
+      agwrite(ipsm, ipsm_dot_file);
+      close(fileno(ipsm_dot_file));
+      ck_free(tmp);
     }
-    /*****************************************************************
-     *                           结束修改                            *
-     *****************************************************************/
   }
 
   //Update others no matter the new seed leads to interesting state sequence or not
@@ -3386,48 +3375,6 @@ static void write_to_testcase(void* mem, u32 len) {
   //AFLNet sends data via network so it does not need this function
 
 }
-
-/*****************************************************
- * 新增代码: 写入IPSM .dot文件的辅助函数 (NEW CODE) *
- *****************************************************/
-/* Write the IPSM graph to a .dot file. */
-static void write_ipsm_dot_file(void) {
-
-  /* Do not write if state-aware mode is not enabled or graph is not initialized. */
-  if (!state_aware_mode || !ipsm) return;
-
-  s32 fd;
-  u8* tmp;
-
-  tmp = alloc_printf("%s/ipsm.dot", out_dir);
-  fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600); /* Use O_TRUNC to overwrite */
-
-  if (fd < 0) {
-    WARNF("Unable to create '%s' for writing", tmp);
-    ck_free(tmp);
-    return;
-  }
-
-  /* Do not PFATAL here, as this might be called from a signal handler. */
-  ipsm_dot_file = fdopen(fd, "w");
-  if (ipsm_dot_file) {
-      agwrite(ipsm, ipsm_dot_file);
-      /* fclose() is better here as it also closes the underlying fd */
-      fclose(ipsm_dot_file);
-  } else {
-      WARNF("fdopen() failed for '%s'", tmp);
-      close(fd);
-  }
-
-  ck_free(tmp);
-
-  /* Update the timestamp */
-  last_ipsm_dot_ms = get_cur_time();
-
-}
-/*****************************************************
- *                      结束新增代码                    *
- *****************************************************/
 
 static void show_stats(void);
 
@@ -9595,15 +9542,6 @@ stop_fuzzing:
 
   SAYF(CURSOR_SHOW cLRD "\n\n+++ Testing aborted %s +++\n" cRST,
        stop_soon == 2 ? "programmatically" : "by user");
-
-  /*******************************************************
-   * 新增代码: 在退出前强制写入最终的 .dot 文件 (NEW CODE) *
-   *******************************************************/
-  OKF("Saving final state machine graph...");
-  write_ipsm_dot_file();
-  /*******************************************************
-   *                        结束新增代码                     *
-   *******************************************************/
 
   /* Running for more than 30 minutes but still doing first cycle? */
 
