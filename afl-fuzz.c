@@ -241,12 +241,14 @@ static s32 cpu_aff = -1;       	      /* Selected CPU core                */
 static FILE* plot_file;               /* Gnuplot output file              */
 
 /*****************************************************
- * 新增代码: 用于延迟 .dot 文件写入的变量和宏 (NEW CODE) *
+ * 修改后的代码: 用于延迟 .dot 文件写入的变量和宏 (MODIFIED CODE) *
  *****************************************************/
 static u64 last_ipsm_dot_ms;          /* Last time ipsm.dot was written   */
+static u32 new_paths_since_dot;       /* Paths found since last dot write */
 #define IPSM_DOT_UPDATE_SEC 30        /* Update interval in seconds       */
+#define IPSM_DOT_NEW_PATH_LIMIT 100   /* Update interval in new paths     */
 /*****************************************************
- *                      结束新增代码                    *
+ *                      结束修改                       *
  *****************************************************/
 
 struct queue_entry {
@@ -780,6 +782,9 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
   if (!response_buf_size || !response_bytes) return;
 
   if (is_state_sequence_interesting(state_sequence, state_count)) {
+    
+    new_paths_since_dot++;
+
     //Save the current kl_messages to a file which can be used to replay the newly discovered paths on the ipsm
     u8 *temp_str = state_sequence_to_string(state_sequence, state_count);
     u8 *fname = alloc_printf("%s/replayable-new-ipsm-paths/id:%s:%s", out_dir, temp_str, dry_run ? basename(q->fname) : "new");
@@ -881,9 +886,10 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
      *****************************************************************/
     /* Periodically update the .dot file, not on every single change. */
     u64 cur_ms = get_cur_time();
-    if (cur_ms - last_ipsm_dot_ms > IPSM_DOT_UPDATE_SEC * 1000) {
-      write_ipsm_dot_file();
-    }
+      if ((new_paths_since_dot >= IPSM_DOT_NEW_PATH_LIMIT) ||
+          (cur_ms - last_ipsm_dot_ms > IPSM_DOT_UPDATE_SEC * 1000)) {
+        write_ipsm_dot_file();
+      }
     /*****************************************************************
      *                           结束修改                            *
      *****************************************************************/
@@ -3421,6 +3427,8 @@ static void write_ipsm_dot_file(void) {
 
   /* Update the timestamp */
   last_ipsm_dot_ms = get_cur_time();
+  new_paths_since_dot = 0;
+
 
 }
 /*****************************************************
