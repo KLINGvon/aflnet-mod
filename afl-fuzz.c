@@ -429,6 +429,7 @@ unsigned int* (*extract_response_codes)(unsigned char* buf, unsigned int buf_siz
 region_t* (*extract_requests)(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref) = NULL;
 
 static void write_ipsm_dot_file(void);
+static u64 get_cur_time(void);
 
 /* Initialize the implemented state machine as a graphviz graph */
 void setup_ipsm()
