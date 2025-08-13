@@ -428,6 +428,8 @@ kliter_t(lms) *M2_prev, *M2_next;
 unsigned int* (*extract_response_codes)(unsigned char* buf, unsigned int buf_size, unsigned int* state_count_ref) = NULL;
 region_t* (*extract_requests)(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref) = NULL;
 
+static void write_ipsm_dot_file(void);
+
 /* Initialize the implemented state machine as a graphviz graph */
 void setup_ipsm()
 {
