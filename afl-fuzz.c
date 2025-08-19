@@ -1254,12 +1254,12 @@ static u8 send_over_network(int* sockfd_ref, u8 reconnect_attempt)
     else likely_buggy = 0;
   }
 
-HANDLE_RESPONSES:
-  // 接收任何剩余的响应
-  net_recv(*sockfd_ref, initial_timeout, poll_wait_msecs, &response_buf, &response_buf_size);
-  if (messages_sent > 0 && response_bytes != NULL) {
-    response_bytes[messages_sent - 1] = response_buf_size;
-  }
+// HANDLE_RESPONSES:
+//   // 接收任何剩余的响应
+//   net_recv(*sockfd_ref, initial_timeout, poll_wait_msecs, &response_buf, &response_buf_size);
+//   if (messages_sent > 0 && response_bytes != NULL) {
+//     response_bytes[messages_sent - 1] = response_buf_size;
+//   }
 
   // // 等待服务器完成任务
   // memset(session_virgin_bits, 255, MAP_SIZE);
