@@ -998,145 +998,276 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
 }
 
 /* Send (mutated) messages in order to the server under test */
-int send_over_network()
+// int send_over_network()
+// {
+//   int n;
+//   u8 likely_buggy = 0;
+//   struct sockaddr_in serv_addr;
+//   struct sockaddr_in local_serv_addr;
+
+//   //Clean up the server if needed
+//   if (cleanup_script) system(cleanup_script);
+
+//   //Wait a bit for the server initialization
+//   usleep(server_wait_usecs);
+
+//   //Clear the response buffer and reset the response buffer size
+//   if (response_buf) {
+//     ck_free(response_buf);
+//     response_buf = NULL;
+//     response_buf_size = 0;
+//   }
+
+//   if (response_bytes) {
+//     ck_free(response_bytes);
+//     response_bytes = NULL;
+//   }
+
+//   //Create a TCP/UDP socket
+//   int sockfd = -1;
+//   if (net_protocol == PRO_TCP)
+//     sockfd = socket(AF_INET, SOCK_STREAM, 0);
+//   else if (net_protocol == PRO_UDP)
+//     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+//   if (sockfd < 0) {
+//     PFATAL("Cannot create a socket");
+//   }
+
+//   //Set timeout for socket data sending/receiving -- otherwise it causes a big delay
+//   //if the server is still alive after processing all the requests
+//   struct timeval timeout;
+//   timeout.tv_sec = 0;
+//   timeout.tv_usec = socket_timeout_usecs;
+//   setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
+
+//   memset(&serv_addr, '0', sizeof(serv_addr));
+
+//   serv_addr.sin_family = AF_INET;
+//   serv_addr.sin_port = htons(net_port);
+//   serv_addr.sin_addr.s_addr = inet_addr(net_ip);
+
+//   //This piece of code is only used for targets that send responses to a specific port number
+//   //The Kamailio SIP server is an example. After running this code, the intialized sockfd 
+//   //will be bound to the given local port
+//   if(local_port > 0) {
+//     local_serv_addr.sin_family = AF_INET;
+//     local_serv_addr.sin_addr.s_addr = INADDR_ANY;
+//     local_serv_addr.sin_port = htons(local_port);
+
+//     local_serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+//     if (bind(sockfd, (struct sockaddr*) &local_serv_addr, sizeof(struct sockaddr_in)))  {
+//       FATAL("Unable to bind socket on local source port");
+//     }
+//   }
+
+//   if(connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+//     //If it cannot connect to the server under test
+//     //try it again as the server initial startup time is varied
+//     for (n=0; n < 1000; n++) {
+//       if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == 0) break;
+//       usleep(1000);
+//     }
+//     if (n== 1000) {
+//       close(sockfd);
+//       return 1;
+//     }
+//   }
+
+//   //retrieve early server response if needed
+//   if (net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size)) goto HANDLE_RESPONSES;
+
+//   //write the request messages
+//   kliter_t(lms) *it;
+//   messages_sent = 0;
+
+//   for (it = kl_begin(kl_messages); it != kl_end(kl_messages); it = kl_next(it)) {
+//     n = net_send(sockfd, timeout, kl_val(it)->mdata, kl_val(it)->msize);
+//     messages_sent++;
+
+//     //Allocate memory to store new accumulated response buffer size
+//     response_bytes = (u32 *) ck_realloc(response_bytes, messages_sent * sizeof(u32));
+
+//     //Jump out if something wrong leading to incomplete message sent
+//     if (n != kl_val(it)->msize) {
+//       goto HANDLE_RESPONSES;
+//     }
+
+//     //retrieve server response
+//     u32 prev_buf_size = response_buf_size;
+//     if (net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size)) {
+//       goto HANDLE_RESPONSES;
+//     }
+
+//     //Update accumulated response buffer size
+//     response_bytes[messages_sent - 1] = response_buf_size;
+
+//     //set likely_buggy flag if AFLNet does not receive any feedback from the server
+//     //it could be a signal of a potentiall server crash, like the case of CVE-2019-7314
+//     if (prev_buf_size == response_buf_size) likely_buggy = 1;
+//     else likely_buggy = 0;
+//   }
+
+// HANDLE_RESPONSES:
+
+//   net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size);
+
+//   if (messages_sent > 0 && response_bytes != NULL) {
+//     response_bytes[messages_sent - 1] = response_buf_size;
+//   }
+
+//   //wait a bit letting the server to complete its remaining task(s)
+//   memset(session_virgin_bits, 255, MAP_SIZE);
+//   while(1) {
+//     if (has_new_bits(session_virgin_bits) != 2) break;
+//   }
+
+//   close(sockfd);
+
+//   if (likely_buggy && false_negative_reduction) return 0;
+
+//   if (terminate_child && (child_pid > 0)) kill(child_pid, SIGTERM);
+
+//   //give the server a bit more time to gracefully terminate
+//   while(1) {
+//     int status = kill(child_pid, 0);
+//     if ((status != 0) && (errno == ESRCH)) break;
+//   }
+
+//   return 0;
+// }
+// /* End of AFLNet-specific variables & functions */
+
+/*****************************************************************************************
+ * 修改后的代码: send_over_network (MODIFIED AND REWRITTEN CODE)
+ *
+ * 这个新版本管理一个传入的sockfd指针，并实现了重连逻辑。
+ * 它返回一个状态码来通知调用者连接的结果。
+ * - 返回 0: 成功
+ * - 返回 1: 连接失败 (需要重试)
+ * - 返回 2: 其他严重错误
+ *****************************************************************************************/
+static u8 send_over_network(int* sockfd_ref, u8 reconnect_attempt)
 {
   int n;
   u8 likely_buggy = 0;
-  struct sockaddr_in serv_addr;
-  struct sockaddr_in local_serv_addr;
+  
+  // 如果需要重新连接或sockfd无效，则建立新连接
+  if (reconnect_attempt || *sockfd_ref < 0) {
+    if (*sockfd_ref > 0) {
+        close(*sockfd_ref);
+    }
 
-  //Clean up the server if needed
-  if (cleanup_script) system(cleanup_script);
+    // 清理和等待服务器
+    if (cleanup_script) system(cleanup_script);
+    usleep(server_wait_usecs);
 
-  //Wait a bit for the server initialization
-  usleep(server_wait_usecs);
+    // 创建 socket
+    if (net_protocol == PRO_TCP)
+      *sockfd_ref = socket(AF_INET, SOCK_STREAM, 0);
+    else if (net_protocol == PRO_UDP)
+      *sockfd_ref = socket(AF_INET, SOCK_DGRAM, 0);
+    else
+      PFATAL("Unsupported protocol selected");
 
-  //Clear the response buffer and reset the response buffer size
-  if (response_buf) {
-    ck_free(response_buf);
-    response_buf = NULL;
-    response_buf_size = 0;
-  }
+    if (*sockfd_ref < 0) PFATAL("Cannot create a socket");
 
-  if (response_bytes) {
-    ck_free(response_bytes);
-    response_bytes = NULL;
-  }
+    // 设置 socket 选项 (超时等)
+    struct timeval timeout;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = socket_timeout_usecs;
+    setsockopt(*sockfd_ref, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
 
-  //Create a TCP/UDP socket
-  int sockfd = -1;
-  if (net_protocol == PRO_TCP)
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-  else if (net_protocol == PRO_UDP)
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    struct sockaddr_in serv_addr;
+    memset(&serv_addr, '0', sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(net_port);
+    serv_addr.sin_addr.s_addr = inet_addr(net_ip);
 
-  if (sockfd < 0) {
-    PFATAL("Cannot create a socket");
-  }
+    // 如果需要，绑定本地端口
+    if(local_port > 0) {
+      struct sockaddr_in local_serv_addr;
+      local_serv_addr.sin_family = AF_INET;
+      local_serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+      local_serv_addr.sin_port = htons(local_port);
+      if (bind(*sockfd_ref, (struct sockaddr*) &local_serv_addr, sizeof(struct sockaddr_in))) {
+        FATAL("Unable to bind socket on local source port");
+      }
+    }
 
-  //Set timeout for socket data sending/receiving -- otherwise it causes a big delay
-  //if the server is still alive after processing all the requests
-  struct timeval timeout;
-  timeout.tv_sec = 0;
-  timeout.tv_usec = socket_timeout_usecs;
-  setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
-
-  memset(&serv_addr, '0', sizeof(serv_addr));
-
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_port = htons(net_port);
-  serv_addr.sin_addr.s_addr = inet_addr(net_ip);
-
-  //This piece of code is only used for targets that send responses to a specific port number
-  //The Kamailio SIP server is an example. After running this code, the intialized sockfd 
-  //will be bound to the given local port
-  if(local_port > 0) {
-    local_serv_addr.sin_family = AF_INET;
-    local_serv_addr.sin_addr.s_addr = INADDR_ANY;
-    local_serv_addr.sin_port = htons(local_port);
-
-    local_serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    if (bind(sockfd, (struct sockaddr*) &local_serv_addr, sizeof(struct sockaddr_in)))  {
-      FATAL("Unable to bind socket on local source port");
+    // 连接到服务器
+    if(connect(*sockfd_ref, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+      // 第一次连接失败是正常的，因为服务器可能还没启动好
+      // 但如果这是一次重连尝试，那么它可能是一个问题
+      close(*sockfd_ref);
+      *sockfd_ref = -1;
+      return 1; // 返回1，表示连接失败
     }
   }
 
-  if(connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-    //If it cannot connect to the server under test
-    //try it again as the server initial startup time is varied
-    for (n=0; n < 1000; n++) {
-      if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == 0) break;
-      usleep(1000);
-    }
-    if (n== 1000) {
-      close(sockfd);
-      return 1;
-    }
+  // 清理响应缓冲区
+  if (response_buf) { ck_free(response_buf); response_buf = NULL; }
+  response_buf_size = 0;
+  if (response_bytes) { ck_free(response_bytes); response_bytes = NULL; }
+
+  // 接收早期的服务器响应 (例如连接后的banner)
+  struct timeval initial_timeout = { .tv_sec = 0, .tv_usec = socket_timeout_usecs };
+  if (net_recv(*sockfd_ref, initial_timeout, poll_wait_msecs, &response_buf, &response_buf_size)) {
+    close(*sockfd_ref);
+    *sockfd_ref = -1;
+    return 1; // 接收失败，可能连接已断开
   }
 
-  //retrieve early server response if needed
-  if (net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size)) goto HANDLE_RESPONSES;
-
-  //write the request messages
+  // 写入请求消息
   kliter_t(lms) *it;
   messages_sent = 0;
-
   for (it = kl_begin(kl_messages); it != kl_end(kl_messages); it = kl_next(it)) {
-    n = net_send(sockfd, timeout, kl_val(it)->mdata, kl_val(it)->msize);
+    struct timeval send_timeout = { .tv_sec = 0, .tv_usec = socket_timeout_usecs };
+    n = net_send(*sockfd_ref, send_timeout, kl_val(it)->mdata, kl_val(it)->msize);
     messages_sent++;
 
-    //Allocate memory to store new accumulated response buffer size
     response_bytes = (u32 *) ck_realloc(response_bytes, messages_sent * sizeof(u32));
 
-    //Jump out if something wrong leading to incomplete message sent
     if (n != kl_val(it)->msize) {
-      goto HANDLE_RESPONSES;
+      // 发送失败，连接很可能已断开
+      goto handle_conn_error;
     }
 
-    //retrieve server response
     u32 prev_buf_size = response_buf_size;
-    if (net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size)) {
-      goto HANDLE_RESPONSES;
+    struct timeval recv_timeout = { .tv_sec = 0, .tv_usec = socket_timeout_usecs };
+    if (net_recv(*sockfd_ref, recv_timeout, poll_wait_msecs, &response_buf, &response_buf_size)) {
+      goto handle_conn_error;
     }
-
-    //Update accumulated response buffer size
+    
     response_bytes[messages_sent - 1] = response_buf_size;
-
-    //set likely_buggy flag if AFLNet does not receive any feedback from the server
-    //it could be a signal of a potentiall server crash, like the case of CVE-2019-7314
     if (prev_buf_size == response_buf_size) likely_buggy = 1;
     else likely_buggy = 0;
   }
 
 HANDLE_RESPONSES:
-
-  net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size);
-
+  // 接收任何剩余的响应
+  net_recv(*sockfd_ref, initial_timeout, poll_wait_msecs, &response_buf, &response_buf_size);
   if (messages_sent > 0 && response_bytes != NULL) {
     response_bytes[messages_sent - 1] = response_buf_size;
   }
 
-  //wait a bit letting the server to complete its remaining task(s)
+  // 等待服务器完成任务
   memset(session_virgin_bits, 255, MAP_SIZE);
   while(1) {
     if (has_new_bits(session_virgin_bits) != 2) break;
   }
+  
+  // 注意：我们不再在这里关闭sockfd
+  if (likely_buggy && false_negative_reduction) return 0; // 这是一个成功的执行，但可能是一个bug
+  
+  // 终止子进程的逻辑现在移到run_target中，因为它与持久连接无关
+  return 0; // 成功
 
-  close(sockfd);
-
-  if (likely_buggy && false_negative_reduction) return 0;
-
-  if (terminate_child && (child_pid > 0)) kill(child_pid, SIGTERM);
-
-  //give the server a bit more time to gracefully terminate
-  while(1) {
-    int status = kill(child_pid, 0);
-    if ((status != 0) && (errno == ESRCH)) break;
-  }
-
-  return 0;
+handle_conn_error:
+  close(*sockfd_ref);
+  *sockfd_ref = -1;
+  return 1; // 返回1，表示连接失败
 }
-/* End of AFLNet-specific variables & functions */
 
 /* Get unix time in milliseconds */
 
@@ -3300,12 +3431,34 @@ static u8 run_target(char** argv, u32 timeout) {
 
   /* The SIGALRM handler simply kills the child_pid and sets child_timed_out. */
 
+  /*******************************************************
+   * 修改后的代码: 管理网络交互和重连 (MODIFIED CODE)   *
+   *******************************************************/
+  if (use_net) {
+    u8 send_status = send_over_network(&fuzz_one_sockfd, 0); // 尝试使用现有连接
+
+    // 如果连接失败 (返回1)，尝试重连一次
+    if (send_status == 1) {
+      // 强制重连
+      send_status = send_over_network(&fuzz_one_sockfd, 1); 
+    }
+
+    // 如果重连后仍然失败，这次执行将被视为超时或错误
+    if (send_status != 0) {
+      // 我们可以设置一个标志，让后续的逻辑知道网络失败了
+      // 但通常，没有响应会导致超时，这已经足够了
+    }
+  }
+  /*******************************************************
+   *                        结束修改                         *
+   *******************************************************/
+
   if (dumb_mode == 1 || no_forkserver) {
-    if (use_net) send_over_network();
+    // if (use_net) send_over_network();
     if (waitpid(child_pid, &status, 0) <= 0) PFATAL("waitpid() failed");
 
   } else {
-    if (use_net) send_over_network();
+    // if (use_net) send_over_network();
     s32 res;
 
     if ((res = read(fsrv_st_fd, &status, 4)) != 4) {
@@ -3315,6 +3468,14 @@ static u8 run_target(char** argv, u32 timeout) {
 
     }
 
+  }
+
+  // 只有在收到子进程状态后才终止它
+  if (terminate_child && (child_pid > 0)) {
+      kill(child_pid, SIGTERM);
+      // 等待子进程优雅退出
+      int kill_status;
+      while (waitpid(child_pid, &kill_status, 0) <= 0 && errno == EINTR);
   }
 
   if (!WIFSTOPPED(status)) child_pid = 0;
@@ -5584,6 +5745,13 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
 
 }
 
+/*******************************************************
+ * 新增代码: 用于在fuzz_one作用域内保存sockfd (NEW CODE) *
+ *******************************************************/
+static int fuzz_one_sockfd = -1;
+/*******************************************************
+ *                      结束新增代码                     *
+ *******************************************************/
 
 /* Helper to choose random block len for block operations in fuzz_one().
    Doesn't return zero, provided that max_len is > 0. */
@@ -5900,6 +6068,18 @@ static u8 fuzz_one(char** argv) {
 
   u8  a_collect[MAX_AUTO_EXTRA];
   u32 a_len = 0;
+
+  /*********************************************************
+   * 新增代码: 在fuzz_one开始时重置sockfd (NEW CODE) *
+   *********************************************************/
+  // 确保每个新的种子都从一个干净的socket状态开始
+  if (fuzz_one_sockfd > 0) {
+      close(fuzz_one_sockfd);
+  }
+  fuzz_one_sockfd = -1;
+  /*********************************************************
+   *                        结束新增代码                       *
+   *********************************************************/
 
 #ifdef IGNORE_FINDS
 
@@ -7684,6 +7864,17 @@ abandon_entry:
     pending_not_fuzzed--;
     if (queue_cur->favored) pending_favored--;
   }
+
+  /*********************************************************
+   * 新增代码: 在fuzz_one结束时清理sockfd (NEW CODE) *
+   *********************************************************/
+  if (fuzz_one_sockfd > 0) {
+    close(fuzz_one_sockfd);
+    fuzz_one_sockfd = -1;
+  }
+  /*********************************************************
+   *                        结束新增代码                       *
+   *********************************************************/
 
   //munmap(orig_in, queue_cur->len);
   ck_free(orig_in);
