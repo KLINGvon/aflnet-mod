@@ -1228,6 +1228,9 @@ static u8 send_over_network(int* sockfd_ref, u8 reconnect_attempt)
     return 1; // 接收失败，可能连接已断开
   }
 
+  // 在每次交互前，我们只清理 response_bytes，因为 response_buf 包含了横幅(如果存在)
+  if (response_bytes) { ck_free(response_bytes); response_bytes = NULL; }
+
   // 写入请求消息
   kliter_t(lms) *it;
   messages_sent = 0;
@@ -1240,13 +1243,13 @@ static u8 send_over_network(int* sockfd_ref, u8 reconnect_attempt)
 
     if (n != kl_val(it)->msize) {
       // 发送失败，连接很可能已断开
-      goto handle_conn_error;
+      goto HANDLE_RESPONSES;
     }
 
     u32 prev_buf_size = response_buf_size;
     struct timeval recv_timeout = { .tv_sec = 0, .tv_usec = socket_timeout_usecs };
     if (net_recv(*sockfd_ref, recv_timeout, poll_wait_msecs, &response_buf, &response_buf_size)) {
-      goto handle_conn_error;
+      goto HANDLE_RESPONSES;
     }
     
     response_bytes[messages_sent - 1] = response_buf_size;
@@ -1254,18 +1257,18 @@ static u8 send_over_network(int* sockfd_ref, u8 reconnect_attempt)
     else likely_buggy = 0;
   }
 
-// HANDLE_RESPONSES:
-//   // 接收任何剩余的响应
-//   net_recv(*sockfd_ref, initial_timeout, poll_wait_msecs, &response_buf, &response_buf_size);
-//   if (messages_sent > 0 && response_bytes != NULL) {
-//     response_bytes[messages_sent - 1] = response_buf_size;
-//   }
+HANDLE_RESPONSES:
+  // 接收任何剩余的响应
+  net_recv(*sockfd_ref, initial_timeout, poll_wait_msecs, &response_buf, &response_buf_size);
+  if (messages_sent > 0 && response_bytes != NULL) {
+    response_bytes[messages_sent - 1] = response_buf_size;
+  }
 
-  // // 等待服务器完成任务
-  // memset(session_virgin_bits, 255, MAP_SIZE);
-  // while(1) {
-  //   if (has_new_bits(session_virgin_bits) != 2) break;
-  // }
+  // 等待服务器完成任务
+  memset(session_virgin_bits, 255, MAP_SIZE);
+  while(1) {
+    if (has_new_bits(session_virgin_bits) != 2) break;
+  }
   
   // 注意：我们不再在这里关闭sockfd
   if (likely_buggy && false_negative_reduction) return 0; // 这是一个成功的执行，但可能是一个bug
