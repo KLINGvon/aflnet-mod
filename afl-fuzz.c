@@ -4002,6 +4002,12 @@ static void perform_dry_run(char** argv) {
 
     if (q->var_behavior) WARNF("Instrumentation output varies across runs.");
 
+    // 清理本次 dry run 迭代创建的 socket
+    if (fuzz_one_sockfd > 0) {
+      close(fuzz_one_sockfd);
+      fuzz_one_sockfd = -1;
+    }
+
     q = q->next;
 
   }
@@ -9537,6 +9543,19 @@ int main(int argc, char** argv) {
 
   check_binary(argv[optind]);
 
+  /*************************************************************************
+   * 核心修复: 在启动的每个关键步骤后清理socket状态 (THE FIX)
+   *************************************************************************/
+
+  ACTF("Spawning the fork server...");
+  init_forkserver(argv);
+  
+  // 清理 init_forkserver 可能创建的socket
+  if (fuzz_one_sockfd > 0) {
+    close(fuzz_one_sockfd);
+    fuzz_one_sockfd = -1;
+  }
+
   start_time = get_cur_time();
 
   if (qemu_mode)
@@ -9545,6 +9564,12 @@ int main(int argc, char** argv) {
     use_argv = argv + optind;
 
   perform_dry_run(use_argv);
+
+  // 在整个 dry run 过程结束后，清理最后一次迭代留下的socket
+  if (fuzz_one_sockfd > 0) {
+    close(fuzz_one_sockfd);
+    fuzz_one_sockfd = -1;
+  }
 
   cull_queue();
 
