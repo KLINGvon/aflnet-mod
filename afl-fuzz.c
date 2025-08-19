@@ -3308,6 +3308,8 @@ static u8 run_target(char** argv, u32 timeout) {
   int status = 0;
   u32 tb4;
 
+  s32 pid_to_kill = -1;
+
   child_timed_out = 0;
 
   /* After this memset, trace_bits[] are effectively volatile, so we
@@ -3403,6 +3405,7 @@ static u8 run_target(char** argv, u32 timeout) {
       exit(0);
 
     }
+    pid_to_kill = child_pid;
 
   } else {
 
@@ -3477,6 +3480,8 @@ static u8 run_target(char** argv, u32 timeout) {
 
   }
 
+  child_pid = 0;
+
   // 只有在收到子进程状态后才终止它
   if (terminate_child && (child_pid > 0)) {
       kill(child_pid, SIGTERM);
@@ -3496,6 +3501,22 @@ static u8 run_target(char** argv, u32 timeout) {
 
   setitimer(ITIMER_REAL, &it, NULL);
 
+  /*****************************************************************************************
+   * 新增: 在所有同步操作完成后，再进行清理性的kill (NEW CODE)
+   * 我们使用之前保存的pid_to_kill，因为child_pid已经被重置为0
+   *****************************************************************************************/
+  if (terminate_child && pid_to_kill > 0) {
+      // 发送SIGTERM。我们不需要在这里waitpid，因为我们已经通过管道
+      // 或waitpid获取了它的最终状态。这只是一个额外的清理步骤。
+      // 我们加一个kill(pid, 0)检查进程是否还存在，以避免不必要的kill调用。
+      if (kill(pid_to_kill, 0) == 0) {
+          kill(pid_to_kill, SIGTERM);
+      }
+  }
+  /*****************************************************************************************
+   *                                    结束新增代码                                     *
+   *****************************************************************************************/
+  
   total_execs++;
 
   /* Any subsequent operations on trace_bits must not be moved by the
