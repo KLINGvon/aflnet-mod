@@ -3288,6 +3288,13 @@ EXP_ST void init_forkserver(char** argv) {
 
 }
 
+/*******************************************************
+ * 新增代码: 用于在fuzz_one作用域内保存sockfd (NEW CODE) *
+ *******************************************************/
+static int fuzz_one_sockfd = -1;
+/*******************************************************
+ *                      结束新增代码                     *
+ *******************************************************/
 
 /* Execute target application, monitoring for timeouts. Return status
    information. The called program will update trace_bits[]. */
@@ -5744,14 +5751,6 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
   return 0;
 
 }
-
-/*******************************************************
- * 新增代码: 用于在fuzz_one作用域内保存sockfd (NEW CODE) *
- *******************************************************/
-static int fuzz_one_sockfd = -1;
-/*******************************************************
- *                      结束新增代码                     *
- *******************************************************/
 
 /* Helper to choose random block len for block operations in fuzz_one().
    Doesn't return zero, provided that max_len is > 0. */
