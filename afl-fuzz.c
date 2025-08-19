@@ -1172,6 +1172,16 @@ static u8 send_over_network(int* sockfd_ref, u8 reconnect_attempt)
 
     if (*sockfd_ref < 0) PFATAL("Cannot create a socket");
 
+    /*************************************************************************
+     * 核心修复: 设置 close-on-exec 标志 (THE FIX)
+     * 这可以防止子进程继承我们的持久化连接socket。
+     *************************************************************************/
+    if (fcntl(*sockfd_ref, F_SETFD, FD_CLOEXEC) < 0)
+      PFATAL("fcntl() failed");
+    /*************************************************************************
+     *                                结束修复                                   *
+     *************************************************************************/
+
     // 设置 socket 选项 (超时等)
     struct timeval timeout;
     timeout.tv_sec = 0;
