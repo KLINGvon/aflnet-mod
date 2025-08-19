@@ -1261,11 +1261,11 @@ HANDLE_RESPONSES:
     response_bytes[messages_sent - 1] = response_buf_size;
   }
 
-  // 等待服务器完成任务
-  memset(session_virgin_bits, 255, MAP_SIZE);
-  while(1) {
-    if (has_new_bits(session_virgin_bits) != 2) break;
-  }
+  // // 等待服务器完成任务
+  // memset(session_virgin_bits, 255, MAP_SIZE);
+  // while(1) {
+  //   if (has_new_bits(session_virgin_bits) != 2) break;
+  // }
   
   // 注意：我们不再在这里关闭sockfd
   if (likely_buggy && false_negative_reduction) return 0; // 这是一个成功的执行，但可能是一个bug
