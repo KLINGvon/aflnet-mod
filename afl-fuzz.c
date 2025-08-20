@@ -1221,7 +1221,7 @@ static u8 send_over_network(int* sockfd_ref, u8 reconnect_attempt)
   if (response_bytes) { ck_free(response_bytes); response_bytes = NULL; }
 
   // 接收早期的服务器响应 (例如连接后的banner)
-  // struct timeval initial_timeout = { .tv_sec = 0, .tv_usec = socket_timeout_usecs };
+  struct timeval initial_timeout = { .tv_sec = 0, .tv_usec = socket_timeout_usecs };
   // if (net_recv(*sockfd_ref, initial_timeout, poll_wait_msecs, &response_buf, &response_buf_size)) {
   //   close(*sockfd_ref);
   //   *sockfd_ref = -1;
@@ -1276,10 +1276,10 @@ HANDLE_RESPONSES:
   // 终止子进程的逻辑现在移到run_target中，因为它与持久连接无关
   return 0; // 成功
 
-handle_conn_error:
-  close(*sockfd_ref);
-  *sockfd_ref = -1;
-  return 1; // 返回1，表示连接失败
+// handle_conn_error:
+//   close(*sockfd_ref);
+//   *sockfd_ref = -1;
+//   return 1; // 返回1，表示连接失败
 }
 
 /* Get unix time in milliseconds */
