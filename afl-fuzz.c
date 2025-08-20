@@ -1221,12 +1221,12 @@ static u8 send_over_network(int* sockfd_ref, u8 reconnect_attempt)
   if (response_bytes) { ck_free(response_bytes); response_bytes = NULL; }
 
   // 接收早期的服务器响应 (例如连接后的banner)
-  struct timeval initial_timeout = { .tv_sec = 0, .tv_usec = socket_timeout_usecs };
-  if (net_recv(*sockfd_ref, initial_timeout, poll_wait_msecs, &response_buf, &response_buf_size)) {
-    close(*sockfd_ref);
-    *sockfd_ref = -1;
-    return 1; // 接收失败，可能连接已断开
-  }
+  // struct timeval initial_timeout = { .tv_sec = 0, .tv_usec = socket_timeout_usecs };
+  // if (net_recv(*sockfd_ref, initial_timeout, poll_wait_msecs, &response_buf, &response_buf_size)) {
+  //   close(*sockfd_ref);
+  //   *sockfd_ref = -1;
+  //   return 1; // 接收失败，可能连接已断开
+  // }
 
   // 在每次交互前，我们只清理 response_bytes，因为 response_buf 包含了横幅(如果存在)
   if (response_bytes) { ck_free(response_bytes); response_bytes = NULL; }
