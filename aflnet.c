@@ -1455,7 +1455,7 @@ unsigned int* extract_response_codes_SNTP(unsigned char* buf, unsigned int buf_s
       char temp[5];
       memcpy(temp, mem, 5);
       
-      unsigned int message_code = (unsigned int)temp;
+      unsigned int message_code = (unsigned int)temp[0];
       if (message_code == 0)
       {
         break;
@@ -1526,7 +1526,7 @@ unsigned int* extract_response_codes_NTP(unsigned char* buf, unsigned int buf_si
       char temp[5];
       memcpy(temp, mem, 5);
       
-      unsigned int message_code = (unsigned int)temp;
+      unsigned int message_code = (unsigned int)temp[0];
       if (message_code == 0)
       {
         break;
@@ -2731,7 +2731,8 @@ int parse_net_config(u8* net_config, u8* protocol, u8** ip_address, u32* port)
 
   if (strlen(net_config) > 80) return 1;
 
-  strncpy(buf, net_config, strlen(net_config));
+  //strncpy(buf, net_config, strlen(net_config));
+  snprintf(buf, sizeof(buf), "%s", net_config);
    str_rtrim(buf);
 
   if (!str_split(buf, "/", tokens, tokenCount))
