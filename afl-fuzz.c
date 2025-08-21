@@ -251,6 +251,10 @@ static u32 new_paths_since_dot;       /* Paths found since last dot write */
  *                      结束修改                       *
  *****************************************************/
 
+#define NEW_STATE_CYCLE_WINDOW 20    // 新状态奖励持续的周期数
+#define NEW_STATE_BONUS_MULTIPLIER 5.0 // 新状态的得分乘数
+#define RARE_EDGE_BONUS_MULTIPLIER 3.0 // 稀有路径奖励的最大乘数
+
 struct queue_entry {
 
   u8* fname;                          /* File name for the test case      */
@@ -418,6 +422,9 @@ klist_t(lms) *kl_messages;
 khash_t(hs32) *khs_ipsm_paths;
 khash_t(hms) *khms_states;
 
+KHASH_MAP_INIT_INT64(h_edge, u32) // 定义一个 key为64位整数，value为32位整数的哈希表类型
+khash_t(h_edge) *kh_edge_traversals;  // 用于存储边 (from_state -> to_state) 的遍历次数
+
 //M2_prev points to the last message of M1 (i.e., prefix)
 //If M1 is empty, M2_prev == NULL
 //M2_next points to the first message of M3 (i.e., suffix)
@@ -442,6 +449,9 @@ void setup_ipsm()
   khs_ipsm_paths = kh_init(hs32);
 
   khms_states = kh_init(hms);
+
+  // ++ 新增初始化代码 ++
+  kh_edge_traversals = kh_init(h_edge);
 }
 
 /* Free memory allocated to state-machine variables */
@@ -454,6 +464,9 @@ void destroy_ipsm()
   state_info_t *state;
   kh_foreach_value(khms_states, state, {ck_free(state->seeds); ck_free(state);});
   kh_destroy(hms, khms_states);
+
+  // ++ 新增销毁代码 ++
+  kh_destroy(h_edge, kh_edge_traversals);
 
   ck_free(state_ids);
 }
@@ -620,10 +633,96 @@ u32 index_search(u32 *A, u32 n, u32 val) {
 }
 
 /* Calculate state scores and select the next state */
+// u32 update_scores_and_select_next_state(u8 mode) {
+//   u32 result = 0, i;
+
+//   if (state_ids_count == 0) return 0;
+
+//   u32 *state_scores = NULL;
+//   state_scores = (u32 *)ck_alloc(state_ids_count * sizeof(u32));
+//   if (!state_scores) PFATAL("Cannot allocate memory for state_scores");
+
+//   khint_t k;
+//   state_info_t *state;
+//   //Update the states' score
+//   for(i = 0; i < state_ids_count; i++) {
+//     u32 state_id = state_ids[i];
+
+//     k = kh_get(hms, khms_states, state_id);
+//     if (k != kh_end(khms_states)) {
+//       state = kh_val(khms_states, k);
+//       switch(mode) {
+//         case FAVOR:
+//           state->score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * pow(2, log(state->paths_discovered + 1)));
+//           break;
+//         //other cases are reserved
+//       }
+
+//       if (i == 0) {
+//         state_scores[i] = state->score;
+//       } else {
+//         state_scores[i] = state_scores[i-1] + state->score;
+//       }
+//     }
+//   }
+
+//   u32 randV = UR(state_scores[state_ids_count - 1]);
+//   u32 idx = index_search(state_scores, state_ids_count, randV);
+//   result = state_ids[idx];
+
+//   if (state_scores) ck_free(state_scores);
+//   return result;
+// }
+
+// /* Select a target state at which we do state-aware fuzzing */
+// unsigned int choose_target_state(u8 mode) {
+//   u32 result = 0;
+
+//   switch (mode) {
+//     case RANDOM_SELECTION: //Random state selection
+//       selected_state_index = UR(state_ids_count);
+//       result = state_ids[selected_state_index];
+//       break;
+//     case ROUND_ROBIN: //Round-robin state selection
+//       result = state_ids[selected_state_index];
+//       selected_state_index++;
+//       if (selected_state_index == state_ids_count) selected_state_index = 0;
+//       break;
+//     case FAVOR:
+//       /* Do ROUND_ROBIN for a few cycles to get enough statistical information*/
+//       if (state_cycles < 5) {
+//         result = state_ids[selected_state_index];
+//         selected_state_index++;
+//         if (selected_state_index == state_ids_count) {
+//           selected_state_index = 0;
+//           state_cycles++;
+//         }
+//         break;
+//       }
+
+//       result = update_scores_and_select_next_state(FAVOR);
+//       break;
+//     default:
+//       break;
+//   }
+
+//   return result;
+// }
+
 u32 update_scores_and_select_next_state(u8 mode) {
   u32 result = 0, i;
 
   if (state_ids_count == 0) return 0;
+
+  u64 total_edge_traversals = 0; // 计算总遍历次数，用于归一化
+  khint_t k_edge;
+  for (k_edge = kh_begin(kh_edge_traversals); k_edge != kh_end(kh_edge_traversals); ++k_edge) {
+    if (kh_exist(kh_edge_traversals, k_edge)) {
+      total_edge_traversals += kh_value(kh_edge_traversals, k_edge);
+    }
+  }
+  if (total_edge_traversals == 0) total_edge_traversals = 1; // 避免除以0
+
 
   u32 *state_scores = NULL;
   state_scores = (u32 *)ck_alloc(state_ids_count * sizeof(u32));
@@ -638,12 +737,58 @@ u32 update_scores_and_select_next_state(u8 mode) {
     k = kh_get(hms, khms_states, state_id);
     if (k != kh_end(khms_states)) {
       state = kh_val(khms_states, k);
+      double score = 1.0; // 使用double计算以提高精度
+
       switch(mode) {
         case FAVOR:
-          state->score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * pow(2, log(state->paths_discovered + 1)));
+          // 原始评分公式
+          score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * pow(2, log(state->paths_discovered + 1)));
           break;
         //other cases are reserved
       }
+
+      // ++ 新增奖励逻辑 ++
+
+      // 1. 新状态奖励
+      if (queue_cycle - state->discovered_at_cycle < NEW_STATE_CYCLE_WINDOW) {
+        score *= NEW_STATE_BONUS_MULTIPLIER;
+      }
+      
+      // 2. 稀有路径奖励
+      // 找到该状态的所有出边，计算平均稀有度
+      char state_str[STATE_STR_LEN];
+      snprintf(state_str, STATE_STR_LEN, "%d", state_id);
+      Agnode_t *n = agnode(ipsm, state_str, FALSE);
+      if (n) {
+        double total_rarity = 0;
+        int out_edge_count = 0;
+        Agedge_t *e;
+        for (e = agfstout(ipsm, n); e; e = agnxtout(ipsm, e)) {
+          out_edge_count++;
+          u32 to_state_id = atoi(agnameof(aghead(e)));
+          u64 edge_key = ((u64)state_id << 32) | to_state_id;
+          
+          khint_t k_edge_count = kh_get(h_edge, kh_edge_traversals, edge_key);
+          u32 traversal_count = 1;
+          if (k_edge_count != kh_end(kh_edge_traversals)) {
+            traversal_count = kh_value(kh_edge_traversals, k_edge_count);
+          }
+          
+          // 稀有度与遍历次数成反比，并进行归一化
+          total_rarity += (double)total_edge_traversals / traversal_count;
+        }
+
+        if (out_edge_count > 0) {
+          double avg_rarity_score = total_rarity / out_edge_count;
+          // 将稀有度转化为一个温和的奖励乘数 (例如，1.0 到 1.0 + RARE_EDGE_BONUS_MULTIPLIER)
+          // 使用log来平滑奖励，防止极端值
+          double rarity_bonus = log1p(avg_rarity_score) / log1p(total_edge_traversals);
+          score *= (1.0 + rarity_bonus * RARE_EDGE_BONUS_MULTIPLIER);
+        }
+      }
+
+      state->score = (u32)score;
+      if (state->score == 0) state->score = 1; // 确保得分不为0
 
       if (i == 0) {
         state_scores[i] = state->score;
@@ -658,41 +803,6 @@ u32 update_scores_and_select_next_state(u8 mode) {
   result = state_ids[idx];
 
   if (state_scores) ck_free(state_scores);
-  return result;
-}
-
-/* Select a target state at which we do state-aware fuzzing */
-unsigned int choose_target_state(u8 mode) {
-  u32 result = 0;
-
-  switch (mode) {
-    case RANDOM_SELECTION: //Random state selection
-      selected_state_index = UR(state_ids_count);
-      result = state_ids[selected_state_index];
-      break;
-    case ROUND_ROBIN: //Round-robin state selection
-      result = state_ids[selected_state_index];
-      selected_state_index++;
-      if (selected_state_index == state_ids_count) selected_state_index = 0;
-      break;
-    case FAVOR:
-      /* Do ROUND_ROBIN for a few cycles to get enough statistical information*/
-      if (state_cycles < 5) {
-        result = state_ids[selected_state_index];
-        selected_state_index++;
-        if (selected_state_index == state_ids_count) {
-          selected_state_index = 0;
-          state_cycles++;
-        }
-        break;
-      }
-
-      result = update_scores_and_select_next_state(FAVOR);
-      break;
-    default:
-      break;
-  }
-
   return result;
 }
 
@@ -829,6 +939,9 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
           newState_From->seeds = NULL;
           newState_From->seeds_count = 0;
 
+          // ++ 新增代码 ++
+          newState_From->discovered_at_cycle = queue_cycle ? queue_cycle : 1; // 避免初始为0
+
           k = kh_put(hms, khms_states, prevStateID, &discard);
           kh_value(khms_states, k) = newState_From;
 
@@ -858,6 +971,9 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
           newState_To->selected_seed_index = 0;
           newState_To->seeds = NULL;
           newState_To->seeds_count = 0;
+
+          // ++ 新增代码 ++
+          ewState_To->discovered_at_cycle = queue_cycle ? queue_cycle : 1;
 
           k = kh_put(hms, khms_states, curStateID, &discard);
           kh_value(khms_states, k) = newState_To;
@@ -992,6 +1108,28 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
     k = kh_get(hms, khms_states, target_state_id);
     if (k != kh_end(khms_states)) {
       kh_val(khms_states, k)->paths_discovered++;
+    }
+  }
+
+  if (state_count > 1) {
+    for (i = 1; i < state_count; i++) {
+      u32 from_state = state_sequence[i - 1];
+      u32 to_state = state_sequence[i];
+    
+      // 将两个32位ID打包成一个64位key
+      u64 edge_key = ((u64)from_state << 32) | to_state;
+    
+      khint_t k_edge = kh_get(h_edge, kh_edge_traversals, edge_key);
+    
+      if (k_edge == kh_end(kh_edge_traversals)) {
+        // 第一次遇到这条边
+        int ret;
+        k_edge = kh_put(h_edge, kh_edge_traversals, edge_key, &ret);
+        kh_value(kh_edge_traversals, k_edge) = 1;
+      } else {
+        // 增加计数
+        kh_value(kh_edge_traversals, k_edge)++;
+      }
     }
   }
 
