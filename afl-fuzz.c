@@ -674,40 +674,40 @@ u32 index_search(u32 *A, u32 n, u32 val) {
 //   return result;
 // }
 
-// /* Select a target state at which we do state-aware fuzzing */
-// unsigned int choose_target_state(u8 mode) {
-//   u32 result = 0;
+/* Select a target state at which we do state-aware fuzzing */
+unsigned int choose_target_state(u8 mode) {
+  u32 result = 0;
 
-//   switch (mode) {
-//     case RANDOM_SELECTION: //Random state selection
-//       selected_state_index = UR(state_ids_count);
-//       result = state_ids[selected_state_index];
-//       break;
-//     case ROUND_ROBIN: //Round-robin state selection
-//       result = state_ids[selected_state_index];
-//       selected_state_index++;
-//       if (selected_state_index == state_ids_count) selected_state_index = 0;
-//       break;
-//     case FAVOR:
-//       /* Do ROUND_ROBIN for a few cycles to get enough statistical information*/
-//       if (state_cycles < 5) {
-//         result = state_ids[selected_state_index];
-//         selected_state_index++;
-//         if (selected_state_index == state_ids_count) {
-//           selected_state_index = 0;
-//           state_cycles++;
-//         }
-//         break;
-//       }
+  switch (mode) {
+    case RANDOM_SELECTION: //Random state selection
+      selected_state_index = UR(state_ids_count);
+      result = state_ids[selected_state_index];
+      break;
+    case ROUND_ROBIN: //Round-robin state selection
+      result = state_ids[selected_state_index];
+      selected_state_index++;
+      if (selected_state_index == state_ids_count) selected_state_index = 0;
+      break;
+    case FAVOR:
+      /* Do ROUND_ROBIN for a few cycles to get enough statistical information*/
+      if (state_cycles < 5) {
+        result = state_ids[selected_state_index];
+        selected_state_index++;
+        if (selected_state_index == state_ids_count) {
+          selected_state_index = 0;
+          state_cycles++;
+        }
+        break;
+      }
 
-//       result = update_scores_and_select_next_state(FAVOR);
-//       break;
-//     default:
-//       break;
-//   }
+      result = update_scores_and_select_next_state(FAVOR);
+      break;
+    default:
+      break;
+  }
 
-//   return result;
-// }
+  return result;
+}
 
 u32 update_scores_and_select_next_state(u8 mode) {
   u32 result = 0, i;
@@ -973,7 +973,7 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
           newState_To->seeds_count = 0;
 
           // ++ 新增代码 ++
-          ewState_To->discovered_at_cycle = queue_cycle ? queue_cycle : 1;
+          newState_To->discovered_at_cycle = queue_cycle ? queue_cycle : 1;
 
           k = kh_put(hms, khms_states, curStateID, &discard);
           kh_value(khms_states, k) = newState_To;
