@@ -251,9 +251,9 @@ static u32 new_paths_since_dot;       /* Paths found since last dot write */
  *                      结束修改                       *
  *****************************************************/
 
-#define NEW_STATE_CYCLE_WINDOW 20    // 新状态奖励持续的周期数
-#define NEW_STATE_BONUS_MULTIPLIER 5.0 // 新状态的得分乘数
-#define RARE_EDGE_BONUS_MULTIPLIER 3.0 // 稀有路径奖励的最大乘数
+#define NEW_STATE_CYCLE_WINDOW 10    // 新状态奖励持续的周期数
+#define NEW_STATE_BONUS_MULTIPLIER 2.0 // 新状态的得分乘数
+#define RARE_EDGE_BONUS_MULTIPLIER 1.5 // 稀有路径奖励的最大乘数
 
 struct queue_entry {
 
@@ -715,10 +715,12 @@ u32 update_scores_and_select_next_state(u8 mode) {
       }
 
       // ++ 新增奖励逻辑 ++
+      double bonus_factor = 0.0;
 
       // 1. 新状态奖励
       if (queue_cycle - state->discovered_at_cycle < NEW_STATE_CYCLE_WINDOW) {
-        score *= NEW_STATE_BONUS_MULTIPLIER;
+        bonus_factor += (NEW_STATE_BONUS_MULTIPLIER - 1.0) * 
+                        (1.0 - (double)(queue_cycle - state->discovered_at_cycle) / NEW_STATE_CYCLE_WINDOW);
       }
       
       // 2. 稀有路径奖励
@@ -750,8 +752,10 @@ u32 update_scores_and_select_next_state(u8 mode) {
           // 将稀有度转化为一个温和的奖励乘数 (例如，1.0 到 1.0 + RARE_EDGE_BONUS_MULTIPLIER)
           // 使用log来平滑奖励，防止极端值
           double rarity_bonus = log1p(avg_rarity_score) / log1p(total_edge_traversals);
-          score *= (1.0 + rarity_bonus * RARE_EDGE_BONUS_MULTIPLIER);
+          bonus_factor += rarity_bonus * (RARE_EDGE_BONUS_MULTIPLIER - 1.0);
         }
+
+        score *= (1.0 + bonus_factor);
       }
 
       state->score = (u32)score;
