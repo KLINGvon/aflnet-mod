@@ -252,8 +252,8 @@ static u32 new_paths_since_dot;       /* Paths found since last dot write */
  *****************************************************/
 
 #define NEW_STATE_CYCLE_WINDOW 10    // 新状态奖励持续的周期数
-#define NEW_STATE_BONUS_MULTIPLIER 2.0 // 新状态的得分乘数
-#define RARE_EDGE_BONUS_MULTIPLIER 1.5 // 稀有路径奖励的最大乘数
+#define NEW_STATE_BONUS_MULTIPLIER 1.5 // 新状态的得分乘数
+#define RARE_EDGE_BONUS_MULTIPLIER 1.2 // 稀有路径奖励的最大乘数
 
 struct queue_entry {
 
