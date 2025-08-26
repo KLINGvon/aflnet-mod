@@ -255,8 +255,6 @@ static u32 new_paths_since_dot;       /* Paths found since last dot write */
 #define NEW_STATE_BONUS_MULTIPLIER 1.5 // 新状态的得分乘数
 #define RARE_EDGE_BONUS_MULTIPLIER 1.2 // 稀有路径奖励的最大乘数
 
-#define min(a,b) (((a)<(b))?(a):(b))
-
 struct queue_entry {
 
   u8* fname;                          /* File name for the test case      */
@@ -453,7 +451,7 @@ void setup_ipsm()
   khms_states = kh_init(hms);
 
   // ++ 新增初始化代码 ++
-  // kh_edge_traversals = kh_init(h_edge);
+  kh_edge_traversals = kh_init(h_edge);
 }
 
 /* Free memory allocated to state-machine variables */
@@ -468,7 +466,7 @@ void destroy_ipsm()
   kh_destroy(hms, khms_states);
 
   // ++ 新增销毁代码 ++
-  // kh_destroy(h_edge, kh_edge_traversals);
+  kh_destroy(h_edge, kh_edge_traversals);
 
   ck_free(state_ids);
 }
@@ -640,18 +638,9 @@ u32 update_scores_and_select_next_state(u8 mode) {
 
   if (state_ids_count == 0) return 0;
 
-  static *state_scores = NULL;
-  static u32 state_scores_capacity = 0;
-
-  if (state_ids_count > state_scores_capacity) {
-    if (state_scores) ck_free(state_scores);
-    state_scores = (u32 *)ck_alloc(state_ids_count * sizeof(u32));
-    if (!state_scores) PFATAL("Cannot allocate memory for state_scores");
-    state_scores_capacity = state_ids_count;
-  }
-  
-  // state_scores = (u32 *)ck_alloc(state_ids_count * sizeof(u32));
-  // if (!state_scores) PFATAL("Cannot allocate memory for state_scores");
+  u32 *state_scores = NULL;
+  state_scores = (u32 *)ck_alloc(state_ids_count * sizeof(u32));
+  if (!state_scores) PFATAL("Cannot allocate memory for state_scores");
 
   khint_t k;
   state_info_t *state;
@@ -664,8 +653,7 @@ u32 update_scores_and_select_next_state(u8 mode) {
       state = kh_val(khms_states, k);
       switch(mode) {
         case FAVOR:
-          // state->score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * pow(2, log(state->paths_discovered + 1)));
-          state->score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * state->paths_discovered + 1);
+          state->score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * pow(2, log(state->paths_discovered + 1)));
           break;
         //other cases are reserved
       }
@@ -686,6 +674,108 @@ u32 update_scores_and_select_next_state(u8 mode) {
   return result;
 }
 
+// u32 update_scores_and_select_next_state(u8 mode) {
+//   u32 result = 0, i;
+
+//   if (state_ids_count == 0) return 0;
+
+//   u64 total_edge_traversals = 0; // 计算总遍历次数，用于归一化
+//   khint_t k_edge;
+//   for (k_edge = kh_begin(kh_edge_traversals); k_edge != kh_end(kh_edge_traversals); ++k_edge) {
+//     if (kh_exist(kh_edge_traversals, k_edge)) {
+//       total_edge_traversals += kh_value(kh_edge_traversals, k_edge);
+//     }
+//   }
+//   if (total_edge_traversals == 0) total_edge_traversals = 1; // 避免除以0
+
+
+//   u32 *state_scores = NULL;
+//   state_scores = (u32 *)ck_alloc(state_ids_count * sizeof(u32));
+//   if (!state_scores) PFATAL("Cannot allocate memory for state_scores");
+
+//   khint_t k;
+//   state_info_t *state;
+//   //Update the states' score
+//   for(i = 0; i < state_ids_count; i++) {
+//     u32 state_id = state_ids[i];
+
+//     k = kh_get(hms, khms_states, state_id);
+//     if (k != kh_end(khms_states)) {
+//       state = kh_val(khms_states, k);
+//       double score = 1.0; // 使用double计算以提高精度
+
+//       switch(mode) {
+//         case FAVOR:
+//           // 原始评分公式
+//           score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * pow(2, log(state->paths_discovered + 1)));
+//           break;
+//         //other cases are reserved
+//       }
+
+//       // ++ 新增奖励逻辑 ++
+//       double bonus_factor = 0.0;
+
+//       // 1. 新状态奖励
+//       if (queue_cycle - state->discovered_at_cycle < NEW_STATE_CYCLE_WINDOW) {
+//         bonus_factor += (NEW_STATE_BONUS_MULTIPLIER - 1.0) * 
+//                         (1.0 - (double)(queue_cycle - state->discovered_at_cycle) / NEW_STATE_CYCLE_WINDOW);
+//       }
+      
+//       // 2. 稀有路径奖励
+//       // 找到该状态的所有出边，计算平均稀有度
+//       char state_str[STATE_STR_LEN];
+//       snprintf(state_str, STATE_STR_LEN, "%d", state_id);
+//       Agnode_t *n = agnode(ipsm, state_str, FALSE);
+//       if (n) {
+//         double total_rarity = 0;
+//         int out_edge_count = 0;
+//         Agedge_t *e;
+//         for (e = agfstout(ipsm, n); e; e = agnxtout(ipsm, e)) {
+//           out_edge_count++;
+//           u32 to_state_id = atoi(agnameof(aghead(e)));
+//           u64 edge_key = ((u64)state_id << 32) | to_state_id;
+          
+//           khint_t k_edge_count = kh_get(h_edge, kh_edge_traversals, edge_key);
+//           u32 traversal_count = 1;
+//           if (k_edge_count != kh_end(kh_edge_traversals)) {
+//             traversal_count = kh_value(kh_edge_traversals, k_edge_count);
+//           }
+          
+//           // 稀有度与遍历次数成反比，并进行归一化
+//           total_rarity += (double)total_edge_traversals / traversal_count;
+//         }
+
+//         if (out_edge_count > 0) {
+//           double avg_rarity_score = total_rarity / out_edge_count;
+//           // 将稀有度转化为一个温和的奖励乘数 (例如，1.0 到 1.0 + RARE_EDGE_BONUS_MULTIPLIER)
+//           // 使用log来平滑奖励，防止极端值
+//           double rarity_bonus = log1p(avg_rarity_score) / log1p(total_edge_traversals);
+//           bonus_factor += rarity_bonus * (RARE_EDGE_BONUS_MULTIPLIER - 1.0);
+//         }
+
+//         score *= (1.0 + bonus_factor);
+//       }
+
+//       state->score = (u32)score;
+//       if (state->score == 0) state->score = 1; // 确保得分不为0
+
+//       if (i == 0) {
+//         state_scores[i] = state->score;
+//       } else {
+//         state_scores[i] = state_scores[i-1] + state->score;
+//       }
+//     }
+//   }
+
+//   u32 randV = UR(state_scores[state_ids_count - 1]);
+//   u32 idx = index_search(state_scores, state_ids_count, randV);
+//   result = state_ids[idx];
+
+//   if (state_scores) ck_free(state_scores);
+//   return result;
+// }
+
+/* Select a target state at which we do state-aware fuzzing */
 unsigned int choose_target_state(u8 mode) {
   u32 result = 0;
 
@@ -701,7 +791,7 @@ unsigned int choose_target_state(u8 mode) {
       break;
     case FAVOR:
       /* Do ROUND_ROBIN for a few cycles to get enough statistical information*/
-      if (state_cycles < min(5, log2(state_ids_count))) {
+      if (state_cycles < 5) {
         result = state_ids[selected_state_index];
         selected_state_index++;
         if (selected_state_index == state_ids_count) {
