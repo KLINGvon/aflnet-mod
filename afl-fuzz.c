@@ -793,7 +793,7 @@ unsigned int choose_target_state(u8 mode) {
       break;
     case FAVOR:
       /* Do ROUND_ROBIN for a few cycles to get enough statistical information*/
-      if (state_cycles < min(5, log2(state_ids_count)) {
+      if (state_cycles < min(5, log2(state_ids_count))) {
         result = state_ids[selected_state_index];
         selected_state_index++;
         if (selected_state_index == state_ids_count) {
