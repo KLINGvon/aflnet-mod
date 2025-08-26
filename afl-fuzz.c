@@ -255,6 +255,8 @@ static u32 new_paths_since_dot;       /* Paths found since last dot write */
 #define NEW_STATE_BONUS_MULTIPLIER 1.5 // 新状态的得分乘数
 #define RARE_EDGE_BONUS_MULTIPLIER 1.2 // 稀有路径奖励的最大乘数
 
+#define min(a,b) (((a)<(b))?(a):(b))
+
 struct queue_entry {
 
   u8* fname;                          /* File name for the test case      */
@@ -791,7 +793,7 @@ unsigned int choose_target_state(u8 mode) {
       break;
     case FAVOR:
       /* Do ROUND_ROBIN for a few cycles to get enough statistical information*/
-      if (state_cycles < 5) {
+      if (state_cycles < min(5, log2(state_ids_count)) {
         result = state_ids[selected_state_index];
         selected_state_index++;
         if (selected_state_index == state_ids_count) {
