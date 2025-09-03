@@ -6052,6 +6052,14 @@ static u8 fuzz_one(char** argv) {
   u8  a_collect[MAX_AUTO_EXTRA];
   u32 a_len = 0;
 
+  /*******************************************************
+   * 新增代码: 声明一个指针用于存储消息边界 (MODIFIED CODE) *
+   *******************************************************/
+  u32 *message_boundaries = NULL;
+  /*******************************************************
+   *                        结束新增代码                     *
+   *******************************************************/
+
 #ifdef IGNORE_FINDS
 
   /* In IGNORE_FINDS mode, skip any entries that weren't in the
@@ -7205,7 +7213,7 @@ havoc_stage:
   /* 首先，我们需要一个数组来存储M2子序列中每条消息的边界。
      这个数组将帮助我们在字节流(out_buf)中定位完整的消息，
      而不是盲目地操作字节。*/
-  u32 message_boundaries[M2_region_count + 1];
+  message_boundaries = ck_alloc(sizeof(u32) * (M2_region_count + 1));
   message_boundaries[0] = 0; // 第一条消息的起始偏移量总是0
   
   u32 current_offset = 0;
@@ -7940,6 +7948,14 @@ abandon_entry:
     pending_not_fuzzed--;
     if (queue_cur->favored) pending_favored--;
   }
+
+  /*******************************************************
+   * 新增代码: 释放消息边界数组的内存 (MODIFIED CODE) *
+   *******************************************************/
+  if (message_boundaries) ck_free(message_boundaries);
+  /*******************************************************
+   *                        结束新增代码                     *
+   *******************************************************/
 
   //munmap(orig_in, queue_cur->len);
   ck_free(orig_in);

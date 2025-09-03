@@ -1603,7 +1603,7 @@ unsigned int* extract_response_codes_SNMP(unsigned char* buf, unsigned int buf_s
       char temp[2];
       memcpy(temp, &mem[byte_count-1], 1);
       temp[1] = 0x0;
-      unsigned int message_code = (unsigned int)(temp);
+      unsigned int message_code = (unsigned int)(temp[0]);
       if (message_code == 0)
       {
         break;
@@ -1620,7 +1620,7 @@ unsigned int* extract_response_codes_SNMP(unsigned char* buf, unsigned int buf_s
       char temp[2];
       memcpy(temp, &mem[byte_count-1], 1);
       temp[1] = 0x0;
-      unsigned int message_code = (unsigned int)(temp);
+      unsigned int message_code = (unsigned int)(temp[0]);
       if (message_code == 0) {
         break;
       }
