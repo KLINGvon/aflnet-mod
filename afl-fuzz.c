@@ -255,6 +255,12 @@ static u32 new_paths_since_dot;       /* Paths found since last dot write */
 #define NEW_STATE_BONUS_MULTIPLIER 1.5 // 新状态的得分乘数
 #define RARE_EDGE_BONUS_MULTIPLIER 1.2 // 稀有路径奖励的最大乘数
 
+// 在文件顶部添加
+#define PROB_HIGH_IMPACT 50  // 60% 的概率选择高影响力操作
+#define PROB_MEDIUM_IMPACT 30 // 25% 的概率选择中影响力操作
+#define PROB_LOW_IMPACT 20   // 15% 的概率选择低影响力操作
+// 确保三者相加为 100
+
 #define min(a,b) (((a)<(b))?(a):(b))
 
 struct queue_entry {
@@ -7192,6 +7198,38 @@ havoc_stage:
 
   stage_cur_byte = -1;
 
+  /*******************************************************
+   * 新增代码: 结构感知的变异准备 (MODIFIED CODE) *
+   *******************************************************/
+
+  /* 首先，我们需要一个数组来存储M2子序列中每条消息的边界。
+     这个数组将帮助我们在字节流(out_buf)中定位完整的消息，
+     而不是盲目地操作字节。*/
+  u32 message_boundaries[M2_region_count + 1];
+  message_boundaries[0] = 0; // 第一条消息的起始偏移量总是0
+  
+  u32 current_offset = 0;
+  u32 i_msg; // 使用一个新的循环变量，避免与外部的 'i' 冲突
+
+  for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
+    // M2_start_region_ID 是 M2 在原始 regions 数组中的起始索引
+    u32 region_idx = M2_start_region_ID + i_msg;
+    
+    // 计算当前消息的长度
+    u32 region_len = (queue_cur->regions[region_idx].end_byte - 
+                      queue_cur->regions[region_idx].start_byte + 1);
+    
+    // 累加偏移量
+    current_offset += region_len;
+    
+    // 存储下一条消息的起始偏移量
+    message_boundaries[i_msg + 1] = current_offset;
+  }
+  
+  /*******************************************************
+   *                        结束新增代码                     *
+   *******************************************************/
+
   /* The havoc stage mutation code is also invoked when splicing files; if the
      splice_cycle variable is set, generate different descriptions and such. */
 
@@ -7234,7 +7272,7 @@ havoc_stage:
 
     for (i = 0; i < use_stacking; i++) {
 
-      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0))) {
+      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (M2_region_count > 1 ? 2 : 0))) {
 
         case 0:
 
@@ -7681,6 +7719,79 @@ havoc_stage:
             temp_len += temp_len;
             break;
           }
+
+          /*******************************************************
+         * 新增代码: 结构感知的变异算子 (MODIFIED CODE) *
+         *******************************************************/
+
+        /* MSG_DELETE: 删除一个完整的消息 */
+        case 21: {
+
+          /* 只有在至少有两条消息时，删除才有意义 */
+          if (temp_len < 2 || M2_region_count < 2) break;
+
+          /* 随机选择要删除的消息索引 */
+          u32 msg_idx_del = UR(M2_region_count);
+
+          /* 获取该消息的边界和长度 */
+          u32 msg_start_del = message_boundaries[msg_idx_del];
+          u32 msg_len_del   = message_boundaries[msg_idx_del + 1] - msg_start_del;
+
+          /* 使用 memmove 将被删除消息之后的所有数据向前移动，覆盖它 */
+          memmove(out_buf + msg_start_del,
+                  out_buf + msg_start_del + msg_len_del,
+                  temp_len - (msg_start_del + msg_len_del));
+
+          /* 更新缓冲区的总长度 */
+          temp_len -= msg_len_del;
+
+          break;
+        }
+
+        /* MSG_DUPLICATE: 复制一个完整的消息 */
+        case 22: {
+
+          /* 只有在有消息可复制时才执行 */
+          if (temp_len < 1 || M2_region_count < 1) break;
+
+          /* 随机选择要复制的消息 */
+          u32 msg_idx_dup = UR(M2_region_count);
+          u32 msg_start_dup = message_boundaries[msg_idx_dup];
+          u32 msg_len_dup   = message_boundaries[msg_idx_dup + 1] - msg_start_dup;
+          
+          /* 检查复制后是否会超出最大文件大小限制 */
+          if (temp_len + msg_len_dup >= MAX_FILE) break;
+          
+          /* 随机选择一个插入点（可以在任何两条消息之间，包括开头和结尾）*/
+          u32 insert_at_msg_idx = UR(M2_region_count + 1);
+          u32 insert_offset     = message_boundaries[insert_at_msg_idx];
+
+          /* 创建一个新的、更大的缓冲区 */
+          u8* new_buf = ck_alloc_nozero(temp_len + msg_len_dup);
+
+          /* 1. 拷贝插入点之前的数据 */
+          memcpy(new_buf, out_buf, insert_offset);
+
+          /* 2. 拷贝被复制的消息到插入点 */
+          memcpy(new_buf + insert_offset, out_buf + msg_start_dup, msg_len_dup);
+          
+          /* 3. 拷贝插入点之后的数据 */
+          memcpy(new_buf + insert_offset + msg_len_dup,
+                 out_buf + insert_offset,
+                 temp_len - insert_offset);
+
+          /* 释放旧缓冲区，用新缓冲区取而代之 */
+          ck_free(out_buf);
+          out_buf = new_buf;
+          
+          /* 更新缓冲区的总长度 */
+          temp_len += msg_len_dup;
+
+          break;
+        }
+       /*******************************************************
+        *                        结束新增代码                     *
+        *******************************************************/
 
       }
 
