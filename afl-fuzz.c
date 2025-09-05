@@ -7281,6 +7281,12 @@ havoc_stage:
 
     for (i = 0; i < use_stacking; i++) {
 
+      /*******************************************************
+       * 新增代码: 结构损坏标志位 (MODIFIED CODE)           *
+       *******************************************************/
+      u8 structure_corrupted = 0;
+      /*******************************************************/
+
       u32 op_choice;
       
       /* 为了动态性，我们将所有可能的操作放入一个数组 */
@@ -7535,6 +7541,8 @@ havoc_stage:
 
             temp_len -= del_len;
 
+            structure_corrupted = 1;
+
             break;
 
           }
@@ -7586,6 +7594,8 @@ havoc_stage:
             temp_len += clone_len;
 
           }
+
+          structure_corrupted = 1;
 
           break;
 
@@ -7705,6 +7715,8 @@ havoc_stage:
             out_buf   = new_buf;
             temp_len += extra_len;
 
+            structure_corrupted = 1;
+
             break;
 
           }
@@ -7812,6 +7824,8 @@ havoc_stage:
           /* 更新缓冲区的总长度 */
           temp_len -= msg_len_del;
 
+          structure_corrupted = 1;
+
           break;
         }
 
@@ -7854,11 +7868,15 @@ havoc_stage:
           /* 更新缓冲区的总长度 */
           temp_len += msg_len_dup;
 
+          structure_corrupted = 1;
+
           break;
         }
        /*******************************************************
         *                        结束新增代码                     *
         *******************************************************/
+
+        if (structure_corrupted) break;
 
       }
 
