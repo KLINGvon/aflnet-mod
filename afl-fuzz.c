@@ -7272,7 +7272,6 @@ havoc_stage:
   /* We essentially just do several thousand runs (depending on perf_score)
      where we take the input file and make random stacked tweaks. */
 
-
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
 
     u32 use_stacking = 1 << (1 + UR(HAVOC_STACK_POW2));
@@ -7281,71 +7280,7 @@ havoc_stage:
 
     for (i = 0; i < use_stacking; i++) {
 
-      /*******************************************************
-       * 新增代码: 结构损坏标志位 (MODIFIED CODE)           *
-       *******************************************************/
-      u8 structure_corrupted = 0;
-      /*******************************************************/
-
-      u32 op_choice;
-      
-      /* 为了动态性，我们将所有可能的操作放入一个数组 */
-      u8 available_ops[32]; // 足够大了
-      u32 op_count = 0;
-
-      u32 roll = UR(100);
-
-      if (roll < PROB_HIGH_IMPACT) {
-        
-        available_ops[op_count++] = 13;
-        available_ops[op_count++] = 14;
-        if (extras_cnt + a_extras_cnt > 0) {
-          available_ops[op_count++] = 15;
-          available_ops[op_count++] = 16;
-        }
-        if (region_level_mutation) {
-          available_ops[op_count++] = 17;
-          available_ops[op_count++] = 18;
-          available_ops[op_count++] = 19;
-          available_ops[op_count++] = 20;
-        }
-        if (M2_region_count > 1) {
-          available_ops[op_count++] = 21;
-          available_ops[op_count++] = 22;
-        }
-
-      } else if (roll < PROB_HIGH_IMPACT + PROB_MEDIUM_IMPACT) {
-        
-        available_ops[op_count++] = 2;
-        available_ops[op_count++] = 3;
-        available_ops[op_count++] = 6;
-        available_ops[op_count++] = 7;
-        available_ops[op_count++] = 8;
-        available_ops[op_count++] = 9;
-
-      } else {
-        
-        available_ops[op_count++] = 0;
-        available_ops[op_count++] = 1;
-        available_ops[op_count++] = 4;
-        available_ops[op_count++] = 5;
-        available_ops[op_count++] = 10;
-        available_ops[op_count++] = 11; 
-        /* case 12 (delete bytes) 通常和 11 类似，这里可以只选一个或两个都加 */
-
-      }
-
-      /* 从当前类别可用的操作中随机选一个 */
-      if (op_count) {
-          op_choice = available_ops[UR(op_count)];
-      } else {
-          /* 作为一个保险措施，如果某个类别碰巧没有可用操作，
-             就退回到一个基础的、总是可用的操作 */
-          op_choice = 10; // 随机字节设置
-      }
-
-      //switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (M2_region_count > 1 ? 2 : 0))) {
-      switch (op_choice) {
+      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (M2_region_count > 1 ? 2 : 0))) {
 
         case 0:
 
@@ -7541,8 +7476,6 @@ havoc_stage:
 
             temp_len -= del_len;
 
-            structure_corrupted = 1;
-
             break;
 
           }
@@ -7569,7 +7502,7 @@ havoc_stage:
 
             }
 
-            clone_to = UR(temp_len);
+            clone_to   = UR(temp_len);
 
             new_buf = ck_alloc_nozero(temp_len + clone_len);
 
@@ -7594,8 +7527,6 @@ havoc_stage:
             temp_len += clone_len;
 
           }
-
-          structure_corrupted = 1;
 
           break;
 
@@ -7629,7 +7560,7 @@ havoc_stage:
            present in the dictionaries. */
 
         case 15: {
-            // if (extras_cnt + a_extras_cnt == 0) break;
+            if (extras_cnt + a_extras_cnt == 0) break;
 
             /* Overwrite bytes with an extra. */
 
@@ -7667,7 +7598,7 @@ havoc_stage:
           }
 
         case 16: {
-            // if (extras_cnt + a_extras_cnt == 0) break;
+            if (extras_cnt + a_extras_cnt == 0) break;
 
             u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
             u8* new_buf;
@@ -7714,8 +7645,6 @@ havoc_stage:
             ck_free(out_buf);
             out_buf   = new_buf;
             temp_len += extra_len;
-
-            structure_corrupted = 1;
 
             break;
 
@@ -7824,8 +7753,6 @@ havoc_stage:
           /* 更新缓冲区的总长度 */
           temp_len -= msg_len_del;
 
-          structure_corrupted = 1;
-
           break;
         }
 
@@ -7868,15 +7795,11 @@ havoc_stage:
           /* 更新缓冲区的总长度 */
           temp_len += msg_len_dup;
 
-          structure_corrupted = 1;
-
           break;
         }
        /*******************************************************
         *                        结束新增代码                     *
         *******************************************************/
-
-        if (structure_corrupted) break;
 
       }
 
