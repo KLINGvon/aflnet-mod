@@ -7282,8 +7282,8 @@ havoc_stage:
 
       switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + \
            (M2_region_count > 1 ? 2 : 0) + \
-           (M2_region_count >= 2 ? 2 : 0) + /* +2 for MSG_SWAP and MSG_OVERWRITE */ \
-           (M2_region_count >= 1 && temp_len > 1 ? 1 : 0) /* +1 for MSG_SPLICE_OP */
+           (M2_region_count >= 2 ? 1 : 0) + /* +2 for MSG_SWAP and MSG_OVERWRITE */ \
+           (M2_region_count >= 1 && temp_len > 1 ? 0 : 0) /* +1 for MSG_SPLICE_OP */
            )) {
 
       // switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (M2_region_count > 1 ? 2 : 0))) {
@@ -7874,90 +7874,90 @@ havoc_stage:
         /*******************************************************
          * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
          *******************************************************/
-        case 24: {
-          /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
-          if (M2_region_count < 1 || temp_len < 2) break;
+        // case 24: {
+        //   /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
+        //   if (M2_region_count < 1 || temp_len < 2) break;
           
-          u32 msg_to_split_idx, msg_to_insert_idx;
-          u32 split_start, split_len, split_offset_in_msg;
-          u32 insert_start, insert_len;
-          u8* new_buf;
+        //   u32 msg_to_split_idx, msg_to_insert_idx;
+        //   u32 split_start, split_len, split_offset_in_msg;
+        //   u32 insert_start, insert_len;
+        //   u8* new_buf;
 
-          /* 1. 随机选择一条消息进行分裂 */
-          msg_to_split_idx = UR(M2_region_count);
-          split_start = message_boundaries[msg_to_split_idx];
-          split_len   = message_boundaries[msg_to_split_idx + 1] - split_start;
+        //   /* 1. 随机选择一条消息进行分裂 */
+        //   msg_to_split_idx = UR(M2_region_count);
+        //   split_start = message_boundaries[msg_to_split_idx];
+        //   split_len   = message_boundaries[msg_to_split_idx + 1] - split_start;
 
-          if (split_len < 2) break; // 长度为1的消息无法分裂
+        //   if (split_len < 2) break; // 长度为1的消息无法分裂
 
-          /* 2. 随机选择另一条消息作为插入内容 (可以是同一条) */
-          msg_to_insert_idx = UR(M2_region_count);
-          insert_start = message_boundaries[msg_to_insert_idx];
-          insert_len   = message_boundaries[msg_to_insert_idx + 1] - insert_start;
+        //   /* 2. 随机选择另一条消息作为插入内容 (可以是同一条) */
+        //   msg_to_insert_idx = UR(M2_region_count);
+        //   insert_start = message_boundaries[msg_to_insert_idx];
+        //   insert_len   = message_boundaries[msg_to_insert_idx + 1] - insert_start;
 
-          /* 3. 检查变异后是否会超出文件大小限制 */
-          if (temp_len + insert_len >= MAX_FILE) break;
+        //   /* 3. 检查变异后是否会超出文件大小限制 */
+        //   if (temp_len + insert_len >= MAX_FILE) break;
 
-          /* 4. 确定在消息内部的分裂点 (1 到 len-1) */
-          split_offset_in_msg = 1 + UR(split_len - 1);
+        //   /* 4. 确定在消息内部的分裂点 (1 到 len-1) */
+        //   split_offset_in_msg = 1 + UR(split_len - 1);
 
-          /* 5. 创建新缓冲区 */
-          new_buf = ck_alloc_nozero(temp_len + insert_len);
+        //   /* 5. 创建新缓冲区 */
+        //   new_buf = ck_alloc_nozero(temp_len + insert_len);
 
-          /* 6. 分段拷贝 */
-          // Part A: 拷贝到分裂点(包含)
-          u32 split_point_abs = split_start + split_offset_in_msg;
-          memcpy(new_buf, out_buf, split_point_abs);
+        //   /* 6. 分段拷贝 */
+        //   // Part A: 拷贝到分裂点(包含)
+        //   u32 split_point_abs = split_start + split_offset_in_msg;
+        //   memcpy(new_buf, out_buf, split_point_abs);
 
-          // Part B: 在分裂点插入选定的消息内容
-          memcpy(new_buf + split_point_abs, out_buf + insert_start, insert_len);
+        //   // Part B: 在分裂点插入选定的消息内容
+        //   memcpy(new_buf + split_point_abs, out_buf + insert_start, insert_len);
 
-          // Part C: 拷贝原缓冲区剩余的部分
-          memcpy(new_buf + split_point_abs + insert_len,
-                 out_buf + split_point_abs,
-                 temp_len - split_point_abs);
+        //   // Part C: 拷贝原缓冲区剩余的部分
+        //   memcpy(new_buf + split_point_abs + insert_len,
+        //          out_buf + split_point_abs,
+        //          temp_len - split_point_abs);
 
-          /* 7. 替换旧缓冲区并更新长度 */
-          ck_free(out_buf);
-          out_buf = new_buf;
-          temp_len += insert_len;
+        //   /* 7. 替换旧缓冲区并更新长度 */
+        //   ck_free(out_buf);
+        //   out_buf = new_buf;
+        //   temp_len += insert_len;
 
-          break;
-        }
+        //   break;
+        // }
 
-        /*******************************************************
-         * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
-         *******************************************************/
-        case 25: {
-          /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
-          if (M2_region_count < 2) break;
+        // /*******************************************************
+        //  * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
+        //  *******************************************************/
+        // case 25: {
+        //   /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
+        //   if (M2_region_count < 2) break;
 
-          u32 target_idx, src_idx;
-          u32 target_start, target_len;
-          u32 src_start, src_len;
+        //   u32 target_idx, src_idx;
+        //   u32 target_start, target_len;
+        //   u32 src_start, src_len;
 
-          /* 1. 随机选择源消息和目标消息 */
-          target_idx = UR(M2_region_count);
-          do {
-            src_idx = UR(M2_region_count);
-          } while (target_idx == src_idx);
+        //   /* 1. 随机选择源消息和目标消息 */
+        //   target_idx = UR(M2_region_count);
+        //   do {
+        //     src_idx = UR(M2_region_count);
+        //   } while (target_idx == src_idx);
           
-          target_start = message_boundaries[target_idx];
-          target_len   = message_boundaries[target_idx + 1] - target_start;
+        //   target_start = message_boundaries[target_idx];
+        //   target_len   = message_boundaries[target_idx + 1] - target_start;
 
-          src_start = message_boundaries[src_idx];
-          src_len   = message_boundaries[src_idx + 1] - src_start;
+        //   src_start = message_boundaries[src_idx];
+        //   src_len   = message_boundaries[src_idx + 1] - src_start;
 
-          /* 2. 将源消息的内容覆盖到目标消息的位置 */
-          /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
-          u32 overwrite_len = MIN(target_len, src_len);
-          if (overwrite_len > 0) {
-            memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
-          }
+        //   /* 2. 将源消息的内容覆盖到目标消息的位置 */
+        //   /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
+        //   u32 overwrite_len = MIN(target_len, src_len);
+        //   if (overwrite_len > 0) {
+        //     memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
+        //   }
 
-          /* 缓冲区总长度不变 */
-          break;
-        }
+        //   /* 缓冲区总长度不变 */
+        //   break;
+        // }
 
       }
 
