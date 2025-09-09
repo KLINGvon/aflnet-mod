@@ -7279,8 +7279,58 @@ havoc_stage:
     stage_cur_val = use_stacking;
 
     for (i = 0; i < use_stacking; i++) {
+      
+      u8 structure_corrupted = 0; // 标记本次变异是否破坏了结构
 
-      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (M2_region_count > 1 ? 2 : 0))) {
+      u32 op_choice;
+      u8 available_ops[32];
+      u32 op_count = 0;
+      u32 roll = UR(100);
+
+      if (roll < PROB_HIGH_IMPACT) {
+        // ... (填充高影响力ops)
+        available_ops[op_count++] = 13;
+        available_ops[op_count++] = 14;
+        if (extras_cnt + a_extras_cnt > 0) {
+          available_ops[op_count++] = 15;
+          available_ops[op_count++] = 16;
+        }
+        if (region_level_mutation) { // 即使不用-R，这个判断也是安全的
+          available_ops[op_count++] = 17;
+          available_ops[op_count++] = 18;
+          available_ops[op_count++] = 19;
+          available_ops[op_count++] = 20;
+        }
+        if (M2_region_count > 1) {
+          available_ops[op_count++] = 21;
+          available_ops[op_count++] = 22;
+        }
+      } else if (roll < PROB_MEDIUM_IMPACT + PROB_HIGH_IMPACT) {
+        // ... (填充中等影响力ops)
+        available_ops[op_count++] = 2;
+        available_ops[op_count++] = 3;
+        available_ops[op_count++] = 6;
+        available_ops[op_count++] = 7;
+        available_ops[op_count++] = 8;
+        available_ops[op_count++] = 9;
+      } else {
+        // ... (填充低影响力ops)
+        available_ops[op_count++] = 0;
+        available_ops[op_count++] = 1;
+        available_ops[op_count++] = 4;
+        available_ops[op_count++] = 5;
+        available_ops[op_count++] = 10;
+        available_ops[op_count++] = 11;
+      }
+
+      if (op_count) {
+          op_choice = available_ops[UR(op_count)];
+      } else {
+          op_choice = 10;
+      }
+
+      switch(op_choice) {
+      //switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (M2_region_count > 1 ? 2 : 0))) {
 
         case 0:
 
@@ -7476,6 +7526,8 @@ havoc_stage:
 
             temp_len -= del_len;
 
+            structure_corrupted = 1;
+
             break;
 
           }
@@ -7527,6 +7579,8 @@ havoc_stage:
             temp_len += clone_len;
 
           }
+
+          structure_corrupted = 1;
 
           break;
 
@@ -7646,6 +7700,8 @@ havoc_stage:
             out_buf   = new_buf;
             temp_len += extra_len;
 
+            structure_corrupted = 1;
+
             break;
 
           }
@@ -7661,6 +7717,7 @@ havoc_stage:
             ck_free(out_buf);
             out_buf = new_buf;
             temp_len = src_region_len;
+            structure_corrupted = 1;
             break;
           }
 
@@ -7685,6 +7742,7 @@ havoc_stage:
             ck_free(src_region);
             out_buf = new_buf;
             temp_len += src_region_len;
+            structure_corrupted = 1;
             break;
           }
 
@@ -7709,6 +7767,7 @@ havoc_stage:
             ck_free(src_region);
             out_buf = new_buf;
             temp_len += src_region_len;
+            structure_corrupted = 1;
             break;
           }
 
@@ -7725,6 +7784,7 @@ havoc_stage:
             ck_free(out_buf);
             out_buf = new_buf;
             temp_len += temp_len;
+            structure_corrupted = 1;
             break;
           }
 
@@ -7752,6 +7812,8 @@ havoc_stage:
 
           /* 更新缓冲区的总长度 */
           temp_len -= msg_len_del;
+
+          structure_corrupted = 1;
 
           break;
         }
@@ -7795,8 +7857,12 @@ havoc_stage:
           /* 更新缓冲区的总长度 */
           temp_len += msg_len_dup;
 
+          structure_corrupted = 1;
+
           break;
         }
+
+        if (structure_corrupted) break;
        /*******************************************************
         *                        结束新增代码                     *
         *******************************************************/
