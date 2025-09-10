@@ -7928,36 +7928,36 @@ havoc_stage:
         // /*******************************************************
         //  * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
         //  *******************************************************/
-        // case 25: {
-        //   /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
-        //   if (M2_region_count < 2) break;
+        case 25: {
+          /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
+          if (M2_region_count < 2) break;
 
-        //   u32 target_idx, src_idx;
-        //   u32 target_start, target_len;
-        //   u32 src_start, src_len;
+          u32 target_idx, src_idx;
+          u32 target_start, target_len;
+          u32 src_start, src_len;
 
-        //   /* 1. 随机选择源消息和目标消息 */
-        //   target_idx = UR(M2_region_count);
-        //   do {
-        //     src_idx = UR(M2_region_count);
-        //   } while (target_idx == src_idx);
+          /* 1. 随机选择源消息和目标消息 */
+          target_idx = UR(M2_region_count);
+          do {
+            src_idx = UR(M2_region_count);
+          } while (target_idx == src_idx);
           
-        //   target_start = message_boundaries[target_idx];
-        //   target_len   = message_boundaries[target_idx + 1] - target_start;
+          target_start = message_boundaries[target_idx];
+          target_len   = message_boundaries[target_idx + 1] - target_start;
 
-        //   src_start = message_boundaries[src_idx];
-        //   src_len   = message_boundaries[src_idx + 1] - src_start;
+          src_start = message_boundaries[src_idx];
+          src_len   = message_boundaries[src_idx + 1] - src_start;
 
-        //   /* 2. 将源消息的内容覆盖到目标消息的位置 */
-        //   /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
-        //   u32 overwrite_len = MIN(target_len, src_len);
-        //   if (overwrite_len > 0) {
-        //     memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
-        //   }
+          /* 2. 将源消息的内容覆盖到目标消息的位置 */
+          /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
+          u32 overwrite_len = MIN(target_len, src_len);
+          if (overwrite_len > 0) {
+            memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
+          }
 
-        //   /* 缓冲区总长度不变 */
-        //   break;
-        // }
+          /* 缓冲区总长度不变 */
+          break;
+        }
 
       }
 
