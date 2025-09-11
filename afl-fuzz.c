@@ -7813,6 +7813,9 @@ havoc_stage:
           /* 前提条件：必须至少有两条消息才能交换 */
           if (M2_region_count < 2) break;
 
+          printf(">>> STARTING CASE 23 (SWAP) <<<\n");
+          fflush(stdout);
+
           u32 msg_idx1, msg_idx2;
           u32 start1, len1, start2, len2;
           u8* new_buf;
@@ -7831,6 +7834,9 @@ havoc_stage:
             msg_idx2 = tmp;
           }
 
+          printf("temp_len=%u, msg_idx1=%u, msg_idx2=%u\n", temp_len, msg_idx1, msg_idx2);
+          fflush(stdout);
+
           /* 3. 获取两条消息的边界和它们之间数据的边界 */
           start1 = message_boundaries[msg_idx1];
           len1   = message_boundaries[msg_idx1 + 1] - start1;
@@ -7840,6 +7846,9 @@ havoc_stage:
           
           intermediate_start = start1 + len1;
           intermediate_len = start2 - intermediate_start;
+
+          printf("start1=%u, len1=%u, start2=%u, len2=%u, inter_len=%u\n", start1, len1, start2, len2, intermediate_len);
+          fflush(stdout);
 
           /* 4. 创建一个新缓冲区来执行交换，这是处理不同长度消息交换最安全的方法 */
           new_buf = ck_alloc_nozero(temp_len);
@@ -7866,9 +7875,12 @@ havoc_stage:
           ck_free(out_buf);
           out_buf = new_buf;
 
-          /* 7. 强制结束当前的堆叠变异循环，因为缓冲区结构已改变 */
-          i = use_stacking;
+          // /* 7. 强制结束当前的堆叠变异循环，因为缓冲区结构已改变 */
+          // i = use_stacking;
           
+          printf(">>> FINISHED CASE 23 (SWAP) <<<\n");
+          fflush(stdout);
+
           /* 总长度不变 */
           break;
         }
@@ -7880,6 +7892,9 @@ havoc_stage:
           /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
           if (M2_region_count < 1 || temp_len < 2) break;
           
+          printf(">>> STARTING CASE 24 (SPLICE) <<<\n");
+          fflush(stdout);
+
           u32 msg_to_split_idx, msg_to_insert_idx;
           u32 split_start, split_len, split_offset_in_msg;
           u32 insert_start, insert_len;
@@ -7924,8 +7939,11 @@ havoc_stage:
           out_buf = new_buf;
           temp_len += insert_len;
 
-          /* 8. 强制结束当前的堆叠变异循环，因为缓冲区结构已改变 */
-          i = use_stacking;
+          // /* 8. 强制结束当前的堆叠变异循环，因为缓冲区结构已改变 */
+          // i = use_stacking;
+
+          printf(">>> FINISHED CASE 24 (SPLICE) <<<\n");
+          fflush(stdout);
 
           break;
         }
@@ -7936,6 +7954,9 @@ havoc_stage:
         case 25: {
           /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
           if (M2_region_count < 2) break;
+
+          printf(">>> RUNNING CASE 25 (OVERWRITE) <<<\n");
+          fflush(stdout);
 
           u32 target_idx, src_idx;
           u32 target_start, target_len;
