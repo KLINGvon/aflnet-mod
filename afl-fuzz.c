@@ -56,6 +56,7 @@
 #include <termios.h>
 #include <dlfcn.h>
 #include <sched.h>
+#include <assert.h>
 
 #include <sys/wait.h>
 #include <sys/time.h>
@@ -7813,9 +7814,6 @@ havoc_stage:
           /* 前提条件：必须至少有两条消息才能交换 */
           if (M2_region_count < 2) break;
 
-          printf(">>> STARTING CASE 23 (SWAP) <<<\n");
-          fflush(stdout);
-
           u32 msg_idx1, msg_idx2;
           u32 start1, len1, start2, len2;
           u8* new_buf;
@@ -7834,9 +7832,6 @@ havoc_stage:
             msg_idx2 = tmp;
           }
 
-          printf("temp_len=%u, msg_idx1=%u, msg_idx2=%u\n", temp_len, msg_idx1, msg_idx2);
-          fflush(stdout);
-
           /* 3. 获取两条消息的边界和它们之间数据的边界 */
           start1 = message_boundaries[msg_idx1];
           len1   = message_boundaries[msg_idx1 + 1] - start1;
@@ -7847,8 +7842,9 @@ havoc_stage:
           intermediate_start = start1 + len1;
           intermediate_len = start2 - intermediate_start;
 
-          printf("start1=%u, len1=%u, start2=%u, len2=%u, inter_len=%u\n", start1, len1, start2, len2, intermediate_len);
-          fflush(stdout);
+          assert(start1 + len1 <= temp_len);
+          assert(start2 + len2 <= temp_len);
+          assert(intermediate_start + intermediate_len <= temp_len);
 
           /* 4. 创建一个新缓冲区来执行交换，这是处理不同长度消息交换最安全的方法 */
           new_buf = ck_alloc_nozero(temp_len);
@@ -7867,9 +7863,20 @@ havoc_stage:
           memcpy(new_buf + start1 + len2 + intermediate_len, out_buf + start1, len1);
 
           // Part E: 第二条消息之后的所有数据
-          memcpy(new_buf + start1 + len2 + intermediate_len + len1,
-                 out_buf + start2 + len2,
-                 temp_len - (start2 + len2));
+          // memcpy(new_buf + start1 + len2 + intermediate_len + len1,
+          //        out_buf + start2 + len2,
+          //        temp_len - (start2 + len2));
+
+          // 【BUG修正】原代码这里计算有误，可能导致越界读取
+          u32 tail_start = start2 + len2;
+          u32 tail_len = temp_len - tail_start;
+          u32 tail_dest_start = start1 + len2 + intermediate_len + len1;
+
+          // 断言检查写入和读取的最后位置
+          assert(tail_dest_start + tail_len <= temp_len);
+          assert(tail_start + tail_len <= temp_len);
+          
+          memcpy(new_buf + tail_dest_start, out_buf + tail_start, tail_len);
           
           /* 6. 替换旧缓冲区 */
           ck_free(out_buf);
@@ -7919,11 +7926,18 @@ havoc_stage:
           split_offset_in_msg = 1 + UR(split_len - 1);
 
           /* 5. 创建新缓冲区 */
-          new_buf = ck_alloc_nozero(temp_len + insert_len);
+          u32 new_len = temp_len + insert_len;
+          new_buf = ck_alloc_nozero(new_len);
 
           /* 6. 分段拷贝 */
           // Part A: 拷贝到分裂点(包含)
           u32 split_point_abs = split_start + split_offset_in_msg;
+
+          // 断言检查
+          assert(split_point_abs <= temp_len);
+          assert(insert_start + insert_len <= temp_len);
+          assert(split_point_abs + insert_len + (temp_len - split_point_abs) <= new_len);
+
           memcpy(new_buf, out_buf, split_point_abs);
 
           // Part B: 在分裂点插入选定的消息内容
