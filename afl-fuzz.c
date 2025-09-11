@@ -7865,6 +7865,9 @@ havoc_stage:
           /* 6. 替换旧缓冲区 */
           ck_free(out_buf);
           out_buf = new_buf;
+
+          /* 7. 强制结束当前的堆叠变异循环，因为缓冲区结构已改变 */
+          i = use_stacking;
           
           /* 总长度不变 */
           break;
@@ -7920,6 +7923,9 @@ havoc_stage:
           ck_free(out_buf);
           out_buf = new_buf;
           temp_len += insert_len;
+
+          /* 8. 强制结束当前的堆叠变异循环，因为缓冲区结构已改变 */
+          i = use_stacking;
 
           break;
         }
