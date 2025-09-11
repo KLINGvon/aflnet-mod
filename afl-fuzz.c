@@ -7534,31 +7534,29 @@ havoc_stage:
             /*******************************************************
              * 同步逻辑: 统一且正确的插入算法 (FIXED CODE)    *
              *******************************************************/
-            u32 i_msg, insertion_idx = M2_region_count;
-            // 1. 找到插入点 `clone_to` 所在的消息索引
+            u32 insert_at = clone_to;
+            u32 insert_len = clone_len;
+            u32 i_msg, insertion_idx = 0;
+
             for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
-                if (clone_to <= message_boundaries[i_msg + 1]) {
-                    insertion_idx = i_msg;
+                if (message_boundaries[i_msg + 1] >= insert_at) {
+                    insertion_idx = i_msg + 1;
                     break;
                 }
             }
+            if (i_msg == M2_region_count) insertion_idx = M2_region_count;
 
-            // 2. 消息总数+1, 并为边界数组扩容
             M2_region_count++;
             message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
             
-            // 3. 为新边界腾出空间
-            memmove(&message_boundaries[insertion_idx + 2], 
-                    &message_boundaries[insertion_idx + 1],
-                    sizeof(u32) * (M2_region_count - (insertion_idx + 1)));
+            memmove(&message_boundaries[insertion_idx + 1], 
+                    &message_boundaries[insertion_idx],
+                    sizeof(u32) * (M2_region_count - insertion_idx));
 
-            // 4. 插入新边界。如果是在消息内部插入，这会成为一个分裂点。
-            //    如果是在消息之间插入，这会成为新消息的结束点。
-            message_boundaries[insertion_idx + 1] = clone_to;
+            message_boundaries[insertion_idx] = insert_at;
             
-            // 5. 更新后续所有边界点的值
             for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
-                 message_boundaries[i_msg] += clone_len;
+                 message_boundaries[i_msg] += insert_len;
             }
 
             assert(message_boundaries[M2_region_count] == temp_len);
@@ -7686,32 +7684,38 @@ havoc_stage:
             /*******************************************************
              * 同步逻辑: 使用与 case 13 完全相同的算法 (FIXED CODE) *
              *******************************************************/
-            u32 i_msg, insertion_idx = M2_region_count;
-            // 1. 找到插入点 `insert_at` 所在的消息索引
+            u32 i_msg, insertion_idx = 0;
+
+            // 1. 找到插入点 `insert_at` 应该在哪个索引之后
+            // 这个循环会找到最后一个 message_boundaries[i] < insert_at 的索引 i
             for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
-                if (insert_at <= message_boundaries[i_msg + 1]) {
-                    insertion_idx = i_msg;
+                if (message_boundaries[i_msg + 1] >= insert_at) {
+                    insertion_idx = i_msg + 1;
                     break;
                 }
             }
+            if (i_msg == M2_region_count) insertion_idx = M2_region_count;
 
             // 2. 消息总数+1, 并为边界数组扩容
             M2_region_count++;
             message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
             
-            // 3. 为新边界腾出空间
-            memmove(&message_boundaries[insertion_idx + 2], 
-                    &message_boundaries[insertion_idx + 1],
-                    sizeof(u32) * (M2_region_count - (insertion_idx + 1)));
+            // 3. 为新边界腾出空间，将插入点之后的所有元素向后移动
+            memmove(&message_boundaries[insertion_idx + 1], 
+                    &message_boundaries[insertion_idx],
+                    sizeof(u32) * (M2_region_count - insertion_idx));
 
-            // 4. 插入新边界
-            message_boundaries[insertion_idx + 1] = insert_at;
+            // 4. 插入新的边界点。
+            // 如果是在消息内部插入，这会成为一个分裂点。
+            // 如果是在消息之间插入，这会成为新消息的结束点。
+            message_boundaries[insertion_idx] = insert_at;
             
-            // 5. 更新后续所有边界点的值
+            // 5. 更新所有在新插入边界点 *之后* 的边界点的值
             for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
-                 message_boundaries[i_msg] += extra_len;
+                 message_boundaries[i_msg] += extra_len; // <--- 使用对应的长度变量
             }
 
+            // 安全断言：检查最后一个边界点是否等于新的总长度
             assert(message_boundaries[M2_region_count] == temp_len);
             /*******************************************************/
 
@@ -8116,26 +8120,38 @@ havoc_stage:
              * 同步逻辑: 使用统一算法 (FIXED CODE)             *
              *******************************************************/
             // 1. 消息分裂点就是插入点，分裂的消息索引就是 insertion_idx
-            u32 insertion_idx = msg_to_split_idx;
-            u32 i_msg;
+            u32 i_msg, insertion_idx = 0;
+
+            // 1. 找到插入点 `insert_at` 应该在哪个索引之后
+            // 这个循环会找到最后一个 message_boundaries[i] < insert_at 的索引 i
+            for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
+                if (message_boundaries[i_msg + 1] >= split_point_abs) {
+                    insertion_idx = i_msg + 1;
+                    break;
+                }
+            }
+            if (i_msg == M2_region_count) insertion_idx = M2_region_count;
 
             // 2. 消息总数+1, 并为边界数组扩容
             M2_region_count++;
             message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
             
-            // 3. 为新边界腾出空间
-            memmove(&message_boundaries[insertion_idx + 2], 
-                    &message_boundaries[insertion_idx + 1],
-                    sizeof(u32) * (M2_region_count - (insertion_idx + 1)));
+            // 3. 为新边界腾出空间，将插入点之后的所有元素向后移动
+            memmove(&message_boundaries[insertion_idx + 1], 
+                    &message_boundaries[insertion_idx],
+                    sizeof(u32) * (M2_region_count - insertion_idx));
 
-            // 4. 插入新的分裂点作为边界
-            message_boundaries[insertion_idx + 1] = split_point_abs;
+            // 4. 插入新的边界点。
+            // 如果是在消息内部插入，这会成为一个分裂点。
+            // 如果是在消息之间插入，这会成为新消息的结束点。
+            message_boundaries[insertion_idx] = split_point_abs;
             
-            // 5. 更新后续所有边界点的值
+            // 5. 更新所有在新插入边界点 *之后* 的边界点的值
             for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
-                 message_boundaries[i_msg] += insert_len;
+                 message_boundaries[i_msg] += insert_len; // <--- 使用对应的长度变量
             }
 
+            // 安全断言：检查最后一个边界点是否等于新的总长度
             assert(message_boundaries[M2_region_count] == temp_len);
             /*******************************************************/
 
