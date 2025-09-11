@@ -7530,6 +7530,7 @@ havoc_stage:
             ck_free(out_buf);
             out_buf = new_buf;
             temp_len += clone_len;
+            
 
           }
 
@@ -7751,9 +7752,6 @@ havoc_stage:
           u32 msg_len_del   = message_boundaries[msg_idx_del + 1] - msg_start_del;
 
           /* 使用 memmove 将被删除消息之后的所有数据向前移动，覆盖它 */
-
-          print_stage(temp_len,M2_region_count,msg_idx_del,msg_start_del,msg_len_del);
-
           memmove(out_buf + msg_start_del,
                   out_buf + msg_start_del + msg_len_del,
                   temp_len - (msg_start_del + msg_len_del));
