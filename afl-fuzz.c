@@ -7283,8 +7283,7 @@ havoc_stage:
       switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + \
            (M2_region_count > 1 ? 2 : 0) + \
            (M2_region_count >= 2 ? 0 : 0) + /* +2 for MSG_SWAP and MSG_OVERWRITE */ \
-           (M2_region_count >= 1 && temp_len > 1 ? 1 : 0) /* +1 for MSG_SPLICE_OP */
-           )) {
+           (M2_region_count >= 1 && temp_len > 1 ? 1 : 0))) {  /* +1 for MSG_SPLICE_OP */
 
       // switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (M2_region_count > 1 ? 2 : 0))) {
 
