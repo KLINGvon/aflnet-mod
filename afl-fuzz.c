@@ -6036,7 +6036,6 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 
 }
 
-
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
    skipped or bailed out. */
@@ -7281,7 +7280,7 @@ havoc_stage:
 
     for (i = 0; i < use_stacking; i++) {
 
-      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + \
+      switch (UR(15 + (region_level_mutation ? 4 : 0) + \
            (M2_region_count > 1 ? 2 : 0) + \
            (M2_region_count >= 2 ? 2 : 0) + /* +2 for MSG_SWAP and MSG_OVERWRITE */ \
            (M2_region_count >= 1 && temp_len > 1 ? 1 : 0))) {  /* +1 for MSG_SPLICE_OP */
@@ -7461,32 +7460,32 @@ havoc_stage:
           out_buf[UR(temp_len)] ^= 1 + UR(255);
           break;
 
-        case 11 ... 12: {
+        // case 11 ... 12: {
 
-            /* Delete bytes. We're making this a bit more likely
-               than insertion (the next option) in hopes of keeping
-               files reasonably small. */
+        //     /* Delete bytes. We're making this a bit more likely
+        //        than insertion (the next option) in hopes of keeping
+        //        files reasonably small. */
 
-            u32 del_from, del_len;
+        //     u32 del_from, del_len;
 
-            if (temp_len < 2) break;
+        //     if (temp_len < 2) break;
 
-            /* Don't delete too much. */
+        //     /* Don't delete too much. */
 
-            del_len = choose_block_len(temp_len - 1);
+        //     del_len = choose_block_len(temp_len - 1);
 
-            del_from = UR(temp_len - del_len + 1);
+        //     del_from = UR(temp_len - del_len + 1);
 
-            memmove(out_buf + del_from, out_buf + del_from + del_len,
-                    temp_len - del_from - del_len);
+        //     memmove(out_buf + del_from, out_buf + del_from + del_len,
+        //             temp_len - del_from - del_len);
 
-            temp_len -= del_len;
+        //     temp_len -= del_len;
 
-            break;
+        //     break;
 
-          }
+        //   }
 
-        case 13:
+        case 11:
 
           if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
 
@@ -7536,7 +7535,7 @@ havoc_stage:
 
           break;
 
-        case 14: {
+        case 12: {
 
             /* Overwrite bytes with a randomly selected chunk (75%) or fixed
                bytes (25%). */
@@ -7565,7 +7564,7 @@ havoc_stage:
         /* Values 15 and 16 can be selected only if there are any extras
            present in the dictionaries. */
 
-        case 15: {
+        case 13: {
             if (extras_cnt + a_extras_cnt == 0) break;
 
             /* Overwrite bytes with an extra. */
@@ -7603,7 +7602,7 @@ havoc_stage:
 
           }
 
-        case 16: {
+        case 14: {
             if (extras_cnt + a_extras_cnt == 0) break;
 
             u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
@@ -7658,7 +7657,7 @@ havoc_stage:
         /* Values 17 to 20 can be selected only if region-level mutations are enabled */
 
         /* Replace the current region with a random region from a random seed */
-        case 17: {
+        case 15: {
             u32 src_region_len = 0;
             u8* new_buf = choose_source_region(&src_region_len);
             if (new_buf == NULL) break;
@@ -7671,7 +7670,7 @@ havoc_stage:
           }
 
         /* Insert a random region from a random seed to the beginning of the current region */
-        case 18: {
+        case 16: {
             u32 src_region_len = 0;
             u8* src_region = choose_source_region(&src_region_len);
             if (src_region == NULL) break;
@@ -7695,7 +7694,7 @@ havoc_stage:
           }
 
         /* Insert a random region from a random seed to the end of the current region */
-        case 19: {
+        case 17: {
             u32 src_region_len = 0;
             u8* src_region = choose_source_region(&src_region_len);
             if (src_region == NULL) break;
@@ -7719,7 +7718,7 @@ havoc_stage:
           }
 
         /* Duplicate the current region */
-        case 20: {
+        case 18: {
             if (temp_len * 2 >= MAX_FILE) break;
 
             u8* new_buf = ck_alloc_nozero(temp_len * 2);
@@ -7739,13 +7738,13 @@ havoc_stage:
          *******************************************************/
 
         /* MSG_DELETE: 删除一个完整的消息 */
-        case 21: {
+        case 19: {
 
           /* 只有在至少有两条消息时，删除才有意义 */
           if (temp_len < 2 || M2_region_count < 2) break;
 
           /* 随机选择要删除的消息索引 */
-          u32 msg_idx_del = UR(M2_region_count - 1);
+          u32 msg_idx_del = UR(M2_region_count);
 
           /* 获取该消息的边界和长度 */
           u32 msg_start_del = message_boundaries[msg_idx_del];
@@ -7753,14 +7752,7 @@ havoc_stage:
 
           /* 使用 memmove 将被删除消息之后的所有数据向前移动，覆盖它 */
 
-          printf("================ DEBUG INFO ================\n");
-          printf("temp_len        = %u\n", temp_len);
-          printf("M2_region_count = %u\n", M2_region_count);
-          printf("msg_idx_del     = %u\n", msg_idx_del);
-          printf("msg_start_del   = %u\n", msg_start_del);
-          printf("msg_len_del     = %u\n", msg_len_del);
-          printf("==========================================\n");
-          fflush(stdout);
+          print_stage(temp_len,M2_region_count,msg_idx_del,msg_start_del,msg_len_del);
 
           memmove(out_buf + msg_start_del,
                   out_buf + msg_start_del + msg_len_del,
@@ -7769,11 +7761,28 @@ havoc_stage:
           /* 更新缓冲区的总长度 */
           temp_len -= msg_len_del;
 
+          /*******************************************************
+           * 新增代码: 同步 message_boundaries (MODIFIED CODE) *
+           *******************************************************/
+          /* 从被删除消息的下一个位置开始，所有边界都需要向前移动 msg_len_del */
+          u32 k;
+          for (k = msg_idx_del + 1; k <= M2_region_count; k++) {
+            message_boundaries[k] -= msg_len_del;
+          }
+          
+          /* 将数组中被删除消息后面的元素向前移动一位 */
+          memmove(&message_boundaries[msg_idx_del],
+                  &message_boundaries[msg_idx_del + 1],
+                  sizeof(u32) * (M2_region_count - msg_idx_del));
+          
+          /* 消息总数减一 */
+          M2_region_count--;
+
           break;
         }
 
         /* MSG_DUPLICATE: 复制一个完整的消息 */
-        case 22: {
+        case 20: {
 
           /* 只有在有消息可复制时才执行 */
           if (temp_len < 1 || M2_region_count < 1) break;
@@ -7811,6 +7820,25 @@ havoc_stage:
           /* 更新缓冲区的总长度 */
           temp_len += msg_len_dup;
 
+          /*******************************************************
+           * 新增代码: 同步 message_boundaries (MODIFIED CODE) *
+           *******************************************************/
+          /* 消息总数加一，需要为边界数组重新分配更大的空间 */
+          M2_region_count++;
+          message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
+
+          /* 为新插入的消息腾出空间，将插入点之后的所有边界向后移动一位 */
+          memmove(&message_boundaries[insert_at_msg_idx + 1],
+                  &message_boundaries[insert_at_msg_idx],
+                  sizeof(u32) * (M2_region_count - insert_at_msg_idx));
+
+          /* 从插入点的下一个位置开始，所有边界都需要向后移动 msg_len_dup */
+          u32 i;
+          for (i = insert_at_msg_idx + 1; i <= M2_region_count; i++) {
+            message_boundaries[i] += msg_len_dup;
+          }
+          /*******************************************************/
+
           break;
         }
        /*******************************************************
@@ -7820,7 +7848,7 @@ havoc_stage:
         /*******************************************************
          * 新增变异算子: 消息交换 (MSG_SWAP)          *
          *******************************************************/
-        case 23: {
+        case 21: {
           /* 前提条件：必须至少有两条消息才能交换 */
           if (M2_region_count < 2) break;
 
@@ -7905,7 +7933,7 @@ havoc_stage:
         /*******************************************************
          * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
          *******************************************************/
-        case 24: {
+        case 22: {
           /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
           if (M2_region_count < 1 || temp_len < 2) break;
           
@@ -7975,7 +8003,7 @@ havoc_stage:
         // /*******************************************************
         //  * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
         //  *******************************************************/
-        case 25: {
+        case 23: {
           /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
           if (M2_region_count < 2) break;
 
