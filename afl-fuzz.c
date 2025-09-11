@@ -7745,7 +7745,7 @@ havoc_stage:
           if (temp_len < 2 || M2_region_count < 2) break;
 
           /* 随机选择要删除的消息索引 */
-          u32 msg_idx_del = UR(M2_region_count);
+          u32 msg_idx_del = UR(M2_region_count - 1);
 
           /* 获取该消息的边界和长度 */
           u32 msg_start_del = message_boundaries[msg_idx_del];
