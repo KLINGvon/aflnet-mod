@@ -7532,37 +7532,35 @@ havoc_stage:
             temp_len += clone_len;
             
             /*******************************************************
-             * 同步逻辑: 在插入点分裂消息                      *
+             * 同步逻辑: 统一且正确的插入算法 (FIXED CODE)    *
              *******************************************************/
-            // 找到插入点 clone_to 所在的消息
-            u32 i_msg, split_msg_idx = 0;
+            u32 i_msg, insertion_idx = M2_region_count;
+            // 1. 找到插入点 `clone_to` 所在的消息索引
             for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
-                if (clone_to >= message_boundaries[i_msg] && clone_to < message_boundaries[i_msg + 1]) {
-                    split_msg_idx = i_msg;
+                if (clone_to <= message_boundaries[i_msg + 1]) {
+                    insertion_idx = i_msg;
                     break;
                 }
             }
 
-            // 如果插入点恰好在消息边界上，我们认为是插入到下一条消息之前
-            if (i_msg == M2_region_count || clone_to == message_boundaries[split_msg_idx + 1]) {
-                 // 逻辑等同于在消息之间插入，消息总数+1
-                 M2_region_count++;
-                 message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-                 memmove(&message_boundaries[split_msg_idx + 2], &message_boundaries[split_msg_idx + 1], sizeof(u32) * (M2_region_count - (split_msg_idx + 1)));
-                 message_boundaries[split_msg_idx + 1] = message_boundaries[split_msg_idx] + clone_len;
-            } else {
-                 // 逻辑是消息被分裂，总数+1
-                 M2_region_count++;
-                 message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-                 memmove(&message_boundaries[split_msg_idx + 2], &message_boundaries[split_msg_idx + 1], sizeof(u32) * (M2_region_count - (split_msg_idx + 1)));
-                 message_boundaries[split_msg_idx + 1] = clone_to;
-            }
+            // 2. 消息总数+1, 并为边界数组扩容
+            M2_region_count++;
+            message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
             
-            // 更新后续所有边界
-            for (i_msg = split_msg_idx + 1; i_msg <= M2_region_count; i_msg++) {
-                 if (i_msg > split_msg_idx + 1 || clone_to != message_boundaries[split_msg_idx])
-                    message_boundaries[i_msg] += clone_len;
+            // 3. 为新边界腾出空间
+            memmove(&message_boundaries[insertion_idx + 2], 
+                    &message_boundaries[insertion_idx + 1],
+                    sizeof(u32) * (M2_region_count - (insertion_idx + 1)));
+
+            // 4. 插入新边界。如果是在消息内部插入，这会成为一个分裂点。
+            //    如果是在消息之间插入，这会成为新消息的结束点。
+            message_boundaries[insertion_idx + 1] = clone_to;
+            
+            // 5. 更新后续所有边界点的值
+            for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
+                 message_boundaries[i_msg] += clone_len;
             }
+
             assert(message_boundaries[M2_region_count] == temp_len);
             /*******************************************************/
           }
@@ -7686,37 +7684,34 @@ havoc_stage:
             temp_len += extra_len;
 
             /*******************************************************
-             * 同步逻辑: 和 case 22 类似，但更简单，因为字典项自成一个新消息
+             * 同步逻辑: 使用与 case 13 完全相同的算法 (FIXED CODE) *
              *******************************************************/
-            // 找到插入点在哪个消息之前
-            u32 i_msg, insert_before_idx = 0;
-            for (i_msg = 0; i_msg <= M2_region_count; i_msg++) {
-              if (insert_at == message_boundaries[i_msg]) {
-                insert_before_idx = i_msg;
-                break;
-              }
-            }
-            // 如果不在边界上，这是一个分裂，但为了简化，我们把它当作一个新消息
-            if (i_msg > M2_region_count) {
-                for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
-                    if (insert_at > message_boundaries[i_msg] && insert_at < message_boundaries[i_msg+1]) {
-                        insert_before_idx = i_msg + 1;
-                        break;
-                    }
+            u32 i_msg, insertion_idx = M2_region_count;
+            // 1. 找到插入点 `insert_at` 所在的消息索引
+            for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
+                if (insert_at <= message_boundaries[i_msg + 1]) {
+                    insertion_idx = i_msg;
+                    break;
                 }
             }
 
+            // 2. 消息总数+1, 并为边界数组扩容
             M2_region_count++;
             message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-
-            memmove(&message_boundaries[insert_before_idx + 1], &message_boundaries[insert_before_idx],
-                    sizeof(u32) * (M2_region_count - insert_before_idx));
-
-            message_boundaries[insert_before_idx] = insert_at;
             
-            for (i_msg = insert_before_idx + 1; i_msg <= M2_region_count; i_msg++) {
-                message_boundaries[i_msg] += extra_len;
+            // 3. 为新边界腾出空间
+            memmove(&message_boundaries[insertion_idx + 2], 
+                    &message_boundaries[insertion_idx + 1],
+                    sizeof(u32) * (M2_region_count - (insertion_idx + 1)));
+
+            // 4. 插入新边界
+            message_boundaries[insertion_idx + 1] = insert_at;
+            
+            // 5. 更新后续所有边界点的值
+            for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
+                 message_boundaries[i_msg] += extra_len;
             }
+
             assert(message_boundaries[M2_region_count] == temp_len);
             /*******************************************************/
 
@@ -8118,25 +8113,29 @@ havoc_stage:
           temp_len += insert_len;
 
           /*******************************************************
-             * 同步逻辑: 消息数量+1, 并在分裂点插入新边界      *
+             * 同步逻辑: 使用统一算法 (FIXED CODE)             *
              *******************************************************/
+            // 1. 消息分裂点就是插入点，分裂的消息索引就是 insertion_idx
+            u32 insertion_idx = msg_to_split_idx;
+            u32 i_msg;
+
+            // 2. 消息总数+1, 并为边界数组扩容
             M2_region_count++;
             message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
             
-            // 为新边界腾出空间
-            memmove(&message_boundaries[msg_to_split_idx + 2], 
-                    &message_boundaries[msg_to_split_idx + 1],
-                    sizeof(u32) * (M2_region_count - (msg_to_split_idx + 1)));
-            
-            // 插入新的分裂点
-            message_boundaries[msg_to_split_idx + 1] = split_point_abs;
+            // 3. 为新边界腾出空间
+            memmove(&message_boundaries[insertion_idx + 2], 
+                    &message_boundaries[insertion_idx + 1],
+                    sizeof(u32) * (M2_region_count - (insertion_idx + 1)));
 
-            // 更新后续所有边界
-            u32 i_msg;
-            for (i_msg = msg_to_split_idx + 2; i_msg <= M2_region_count; i_msg++) {
-                message_boundaries[i_msg] += insert_len;
-            }
+            // 4. 插入新的分裂点作为边界
+            message_boundaries[insertion_idx + 1] = split_point_abs;
             
+            // 5. 更新后续所有边界点的值
+            for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
+                 message_boundaries[i_msg] += insert_len;
+            }
+
             assert(message_boundaries[M2_region_count] == temp_len);
             /*******************************************************/
 
