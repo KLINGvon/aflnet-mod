@@ -73,264 +73,265 @@
 #include <graphviz/gvc.h>
 #include <math.h>
 
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined (__OpenBSD__)
-#  include <sys/sysctl.h>
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
+#include <sys/sysctl.h>
 #endif /* __APPLE__ || __FreeBSD__ || __OpenBSD__ */
 
 /* For systems that have sched_setaffinity; right now just Linux, but one
    can hope... */
 
 #ifdef __linux__
-#  define HAVE_AFFINITY 1
+#define HAVE_AFFINITY 1
 #endif /* __linux__ */
 
 /* A toggle to export some variables when building as a library. Not very
    useful for the general public. */
 
 #ifdef AFL_LIB
-#  define EXP_ST
+#define EXP_ST
 #else
-#  define EXP_ST static
+#define EXP_ST static
 #endif /* ^AFL_LIB */
 
 /* Lots of globals, but mostly for the status UI and other things where it
    really makes no sense to haul them around as function parameters. */
 
-
-EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
-          *out_file,                  /* File to fuzz, if any             */
-          *out_dir,                   /* Working & output directory       */
-          *sync_dir,                  /* Synchronization directory        */
-          *sync_id,                   /* Fuzzer ID                        */
-          *use_banner,                /* Display banner                   */
-          *in_bitmap,                 /* Input bitmap                     */
-          *doc_path,                  /* Path to documentation dir        */
-          *target_path,               /* Path to target binary            */
-          *orig_cmdline;              /* Original command line            */
+EXP_ST u8 *in_dir, /* Input directory with test cases  */
+    *out_file,     /* File to fuzz, if any             */
+    *out_dir,      /* Working & output directory       */
+    *sync_dir,     /* Synchronization directory        */
+    *sync_id,      /* Fuzzer ID                        */
+    *use_banner,   /* Display banner                   */
+    *in_bitmap,    /* Input bitmap                     */
+    *doc_path,     /* Path to documentation dir        */
+    *target_path,  /* Path to target binary            */
+    *orig_cmdline; /* Original command line            */
 
 EXP_ST u32 exec_tmout = EXEC_TIMEOUT; /* Configurable exec timeout (ms)   */
 static u32 hang_tmout = EXEC_TIMEOUT; /* Timeout used for hang det (ms)   */
 
-EXP_ST u64 mem_limit  = MEM_LIMIT;    /* Memory cap for child (MB)        */
+EXP_ST u64 mem_limit = MEM_LIMIT; /* Memory cap for child (MB)        */
 
-static u32 stats_update_freq = 1;     /* Stats update frequency (execs)   */
+static u32 stats_update_freq = 1; /* Stats update frequency (execs)   */
 
-EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
-           force_deterministic,       /* Force deterministic stages?      */
-           use_splicing,              /* Recombine input files?           */
-           dumb_mode,                 /* Run in non-instrumented mode?    */
-           score_changed,             /* Scoring for favorites changed?   */
-           kill_signal,               /* Signal that killed the child     */
-           resuming_fuzz,             /* Resuming an older fuzzing job?   */
-           timeout_given,             /* Specific timeout given?          */
-           not_on_tty,                /* stdout is not a tty              */
-           term_too_small,            /* terminal dimensions too small    */
-           uses_asan,                 /* Target uses ASAN?                */
-           no_forkserver,             /* Disable forkserver?              */
-           crash_mode,                /* Crash mode! Yeah!                */
-           in_place_resume,           /* Attempt in-place resume?         */
-           auto_changed,              /* Auto-generated tokens changed?   */
-           no_cpu_meter_red,          /* Feng shui on the status screen   */
-           no_arith,                  /* Skip most arithmetic ops         */
-           shuffle_queue,             /* Shuffle input queue?             */
-           bitmap_changed = 1,        /* Time to update bitmap?           */
-           qemu_mode,                 /* Running in QEMU mode?            */
-           skip_requested,            /* Skip request, via SIGUSR1        */
-           run_over10m,               /* Run time over 10 minutes?        */
-           persistent_mode,           /* Running in persistent mode?      */
-           deferred_mode,             /* Deferred forkserver mode?        */
-           fast_cal;                  /* Try to calibrate faster?         */
+EXP_ST u8 skip_deterministic, /* Skip deterministic stages?       */
+    force_deterministic,      /* Force deterministic stages?      */
+    use_splicing,             /* Recombine input files?           */
+    dumb_mode,                /* Run in non-instrumented mode?    */
+    score_changed,            /* Scoring for favorites changed?   */
+    kill_signal,              /* Signal that killed the child     */
+    resuming_fuzz,            /* Resuming an older fuzzing job?   */
+    timeout_given,            /* Specific timeout given?          */
+    not_on_tty,               /* stdout is not a tty              */
+    term_too_small,           /* terminal dimensions too small    */
+    uses_asan,                /* Target uses ASAN?                */
+    no_forkserver,            /* Disable forkserver?              */
+    crash_mode,               /* Crash mode! Yeah!                */
+    in_place_resume,          /* Attempt in-place resume?         */
+    auto_changed,             /* Auto-generated tokens changed?   */
+    no_cpu_meter_red,         /* Feng shui on the status screen   */
+    no_arith,                 /* Skip most arithmetic ops         */
+    shuffle_queue,            /* Shuffle input queue?             */
+    bitmap_changed = 1,       /* Time to update bitmap?           */
+    qemu_mode,                /* Running in QEMU mode?            */
+    skip_requested,           /* Skip request, via SIGUSR1        */
+    run_over10m,              /* Run time over 10 minutes?        */
+    persistent_mode,          /* Running in persistent mode?      */
+    deferred_mode,            /* Deferred forkserver mode?        */
+    fast_cal;                 /* Try to calibrate faster?         */
 
-static s32 out_fd,                    /* Persistent fd for out_file       */
-           dev_urandom_fd = -1,       /* Persistent fd for /dev/urandom   */
-           dev_null_fd = -1,          /* Persistent fd for /dev/null      */
-           fsrv_ctl_fd,               /* Fork server control pipe (write) */
-           fsrv_st_fd;                /* Fork server status pipe (read)   */
+static s32 out_fd,       /* Persistent fd for out_file       */
+    dev_urandom_fd = -1, /* Persistent fd for /dev/urandom   */
+    dev_null_fd = -1,    /* Persistent fd for /dev/null      */
+    fsrv_ctl_fd,         /* Fork server control pipe (write) */
+    fsrv_st_fd;          /* Fork server status pipe (read)   */
 
-static s32 forksrv_pid,               /* PID of the fork server           */
-           child_pid = -1,            /* PID of the fuzzed program        */
-           out_dir_fd = -1;           /* FD of the lock file              */
+static s32 forksrv_pid, /* PID of the fork server           */
+    child_pid = -1,     /* PID of the fuzzed program        */
+    out_dir_fd = -1;    /* FD of the lock file              */
 
-EXP_ST u8* trace_bits;                /* SHM with instrumentation bitmap  */
+EXP_ST u8 *trace_bits; /* SHM with instrumentation bitmap  */
 
-EXP_ST u8  virgin_bits[MAP_SIZE],     /* Regions yet untouched by fuzzing */
-           virgin_tmout[MAP_SIZE],    /* Bits we haven't seen in tmouts   */
-           virgin_crash[MAP_SIZE];    /* Bits we haven't seen in crashes  */
+EXP_ST u8 virgin_bits[MAP_SIZE], /* Regions yet untouched by fuzzing */
+    virgin_tmout[MAP_SIZE],      /* Bits we haven't seen in tmouts   */
+    virgin_crash[MAP_SIZE];      /* Bits we haven't seen in crashes  */
 
-static u8  var_bytes[MAP_SIZE];       /* Bytes that appear to be variable */
+static u8 var_bytes[MAP_SIZE]; /* Bytes that appear to be variable */
 
-static s32 shm_id;                    /* ID of the SHM region             */
+static s32 shm_id; /* ID of the SHM region             */
 
-static volatile u8 stop_soon,         /* Ctrl-C pressed?                  */
-                   clear_screen = 1,  /* Window resized?                  */
-                   child_timed_out;   /* Traced process timed out?        */
+static volatile u8 stop_soon, /* Ctrl-C pressed?                  */
+    clear_screen = 1,         /* Window resized?                  */
+    child_timed_out;          /* Traced process timed out?        */
 
-EXP_ST u32 queued_paths,              /* Total number of queued testcases */
-           queued_variable,           /* Testcases with variable behavior */
-           queued_at_start,           /* Total number of initial inputs   */
-           queued_discovered,         /* Items discovered during this run */
-           queued_imported,           /* Items imported via -S            */
-           queued_favored,            /* Paths deemed favorable           */
-           queued_with_cov,           /* Paths with new coverage bytes    */
-           pending_not_fuzzed,        /* Queued but not done yet          */
-           pending_favored,           /* Pending favored paths            */
-           cur_skipped_paths,         /* Abandoned inputs in cur cycle    */
-           cur_depth,                 /* Current path depth               */
-           max_depth,                 /* Max path depth                   */
-           useless_at_start,          /* Number of useless starting paths */
-           var_byte_count,            /* Bitmap bytes with var behavior   */
-           current_entry,             /* Current queue entry ID           */
-           havoc_div = 1;             /* Cycle count divisor for havoc    */
+EXP_ST u32 queued_paths, /* Total number of queued testcases */
+    queued_variable,     /* Testcases with variable behavior */
+    queued_at_start,     /* Total number of initial inputs   */
+    queued_discovered,   /* Items discovered during this run */
+    queued_imported,     /* Items imported via -S            */
+    queued_favored,      /* Paths deemed favorable           */
+    queued_with_cov,     /* Paths with new coverage bytes    */
+    pending_not_fuzzed,  /* Queued but not done yet          */
+    pending_favored,     /* Pending favored paths            */
+    cur_skipped_paths,   /* Abandoned inputs in cur cycle    */
+    cur_depth,           /* Current path depth               */
+    max_depth,           /* Max path depth                   */
+    useless_at_start,    /* Number of useless starting paths */
+    var_byte_count,      /* Bitmap bytes with var behavior   */
+    current_entry,       /* Current queue entry ID           */
+    havoc_div = 1;       /* Cycle count divisor for havoc    */
 
-EXP_ST u64 total_crashes,             /* Total number of crashes          */
-           unique_crashes,            /* Crashes with unique signatures   */
-           total_tmouts,              /* Total number of timeouts         */
-           unique_tmouts,             /* Timeouts with unique signatures  */
-           unique_hangs,              /* Hangs with unique signatures     */
-           total_execs,               /* Total execve() calls             */
-           slowest_exec_ms,           /* Slowest testcase non hang in ms  */
-           start_time,                /* Unix start time (ms)             */
-           last_path_time,            /* Time for most recent path (ms)   */
-           last_crash_time,           /* Time for most recent crash (ms)  */
-           last_hang_time,            /* Time for most recent hang (ms)   */
-           last_crash_execs,          /* Exec counter at last crash       */
-           queue_cycle,               /* Queue round counter              */
-           cycles_wo_finds,           /* Cycles without any new paths     */
-           trim_execs,                /* Execs done to trim input files   */
-           bytes_trim_in,             /* Bytes coming into the trimmer    */
-           bytes_trim_out,            /* Bytes coming outa the trimmer    */
-           blocks_eff_total,          /* Blocks subject to effector maps  */
-           blocks_eff_select;         /* Blocks selected as fuzzable      */
+EXP_ST u64 total_crashes, /* Total number of crashes          */
+    unique_crashes,       /* Crashes with unique signatures   */
+    total_tmouts,         /* Total number of timeouts         */
+    unique_tmouts,        /* Timeouts with unique signatures  */
+    unique_hangs,         /* Hangs with unique signatures     */
+    total_execs,          /* Total execve() calls             */
+    slowest_exec_ms,      /* Slowest testcase non hang in ms  */
+    start_time,           /* Unix start time (ms)             */
+    last_path_time,       /* Time for most recent path (ms)   */
+    last_crash_time,      /* Time for most recent crash (ms)  */
+    last_hang_time,       /* Time for most recent hang (ms)   */
+    last_crash_execs,     /* Exec counter at last crash       */
+    queue_cycle,          /* Queue round counter              */
+    cycles_wo_finds,      /* Cycles without any new paths     */
+    trim_execs,           /* Execs done to trim input files   */
+    bytes_trim_in,        /* Bytes coming into the trimmer    */
+    bytes_trim_out,       /* Bytes coming outa the trimmer    */
+    blocks_eff_total,     /* Blocks subject to effector maps  */
+    blocks_eff_select;    /* Blocks selected as fuzzable      */
 
-static u32 subseq_tmouts;             /* Number of timeouts in a row      */
+static u32 subseq_tmouts; /* Number of timeouts in a row      */
 
-static u8 *stage_name = "init",       /* Name of the current fuzz stage   */
-          *stage_short,               /* Short stage name                 */
-          *syncing_party;             /* Currently syncing with...        */
+static u8 *stage_name = "init", /* Name of the current fuzz stage   */
+    *stage_short,               /* Short stage name                 */
+    *syncing_party;             /* Currently syncing with...        */
 
-static s32 stage_cur, stage_max;      /* Stage progression                */
-static s32 splicing_with = -1;        /* Splicing with which test case?   */
+static s32 stage_cur, stage_max; /* Stage progression                */
+static s32 splicing_with = -1;   /* Splicing with which test case?   */
 
-static u32 master_id, master_max;     /* Master instance job splitting    */
+static u32 master_id, master_max; /* Master instance job splitting    */
 
-static u32 syncing_case;              /* Syncing with case #...           */
+static u32 syncing_case; /* Syncing with case #...           */
 
-static s32 stage_cur_byte,            /* Byte offset of current stage op  */
-           stage_cur_val;             /* Value used for stage op          */
+static s32 stage_cur_byte, /* Byte offset of current stage op  */
+    stage_cur_val;         /* Value used for stage op          */
 
-static u8  stage_val_type;            /* Value type (STAGE_VAL_*)         */
+static u8 stage_val_type; /* Value type (STAGE_VAL_*)         */
 
-static u64 stage_finds[32],           /* Patterns found per fuzz stage    */
-           stage_cycles[32];          /* Execs per fuzz stage             */
+static u64 stage_finds[32], /* Patterns found per fuzz stage    */
+    stage_cycles[32];       /* Execs per fuzz stage             */
 
-static u32 rand_cnt;                  /* Random number counter            */
+static u32 rand_cnt; /* Random number counter            */
 
-static u64 total_cal_us,              /* Total calibration time (us)      */
-           total_cal_cycles;          /* Total calibration cycles         */
+static u64 total_cal_us, /* Total calibration time (us)      */
+    total_cal_cycles;    /* Total calibration cycles         */
 
-static u64 total_bitmap_size,         /* Total bit count for all bitmaps  */
-           total_bitmap_entries;      /* Number of bitmaps counted        */
+static u64 total_bitmap_size, /* Total bit count for all bitmaps  */
+    total_bitmap_entries;     /* Number of bitmaps counted        */
 
-static s32 cpu_core_count;            /* CPU core count                   */
+static s32 cpu_core_count; /* CPU core count                   */
 
 #ifdef HAVE_AFFINITY
 
-static s32 cpu_aff = -1;       	      /* Selected CPU core                */
+static s32 cpu_aff = -1; /* Selected CPU core                */
 
 #endif /* HAVE_AFFINITY */
 
-static FILE* plot_file;               /* Gnuplot output file              */
+static FILE *plot_file; /* Gnuplot output file              */
 
 /*****************************************************
  * 修改后的代码: 用于延迟 .dot 文件写入的变量和宏 (MODIFIED CODE) *
  *****************************************************/
-static u64 last_ipsm_dot_ms;          /* Last time ipsm.dot was written   */
-static u32 new_paths_since_dot;       /* Paths found since last dot write */
-#define IPSM_DOT_UPDATE_SEC 30        /* Update interval in seconds       */
-#define IPSM_DOT_NEW_PATH_LIMIT 100   /* Update interval in new paths     */
+static u64 last_ipsm_dot_ms;        /* Last time ipsm.dot was written   */
+static u32 new_paths_since_dot;     /* Paths found since last dot write */
+#define IPSM_DOT_UPDATE_SEC 30      /* Update interval in seconds       */
+#define IPSM_DOT_NEW_PATH_LIMIT 100 /* Update interval in new paths     */
 /*****************************************************
  *                      结束修改                       *
  *****************************************************/
 
-#define NEW_STATE_CYCLE_WINDOW 10    // 新状态奖励持续的周期数
+#define NEW_STATE_CYCLE_WINDOW 10      // 新状态奖励持续的周期数
 #define NEW_STATE_BONUS_MULTIPLIER 1.5 // 新状态的得分乘数
 #define RARE_EDGE_BONUS_MULTIPLIER 1.2 // 稀有路径奖励的最大乘数
 
 // 在文件顶部添加
-#define PROB_HIGH_IMPACT 50  // 60% 的概率选择高影响力操作
+#define PROB_HIGH_IMPACT 50   // 60% 的概率选择高影响力操作
 #define PROB_MEDIUM_IMPACT 30 // 25% 的概率选择中影响力操作
-#define PROB_LOW_IMPACT 20   // 15% 的概率选择低影响力操作
+#define PROB_LOW_IMPACT 20    // 15% 的概率选择低影响力操作
 // 确保三者相加为 100
 
-#define min(a,b) (((a)<(b))?(a):(b))
+#define min(a, b) (((a) < (b)) ? (a) : (b))
 
-struct queue_entry {
+struct queue_entry
+{
 
-  u8* fname;                          /* File name for the test case      */
-  u32 len;                            /* Input length                     */
+  u8 *fname; /* File name for the test case      */
+  u32 len;   /* Input length                     */
 
-  u8  cal_failed,                     /* Calibration failed?              */
-      trim_done,                      /* Trimmed?                         */
-      was_fuzzed,                     /* Had any fuzzing done yet?        */
-      passed_det,                     /* Deterministic stages passed?     */
-      has_new_cov,                    /* Triggers new coverage?           */
-      var_behavior,                   /* Variable behavior?               */
-      favored,                        /* Currently favored?               */
-      fs_redundant;                   /* Marked as redundant in the fs?   */
+  u8 cal_failed,    /* Calibration failed?              */
+      trim_done,    /* Trimmed?                         */
+      was_fuzzed,   /* Had any fuzzing done yet?        */
+      passed_det,   /* Deterministic stages passed?     */
+      has_new_cov,  /* Triggers new coverage?           */
+      var_behavior, /* Variable behavior?               */
+      favored,      /* Currently favored?               */
+      fs_redundant; /* Marked as redundant in the fs?   */
 
-  u32 bitmap_size,                    /* Number of bits set in bitmap     */
-      exec_cksum;                     /* Checksum of the execution trace  */
+  u32 bitmap_size, /* Number of bits set in bitmap     */
+      exec_cksum;  /* Checksum of the execution trace  */
 
-  u64 exec_us,                        /* Execution time (us)              */
-      handicap,                       /* Number of queue cycles behind    */
-      depth;                          /* Path depth                       */
+  u64 exec_us,  /* Execution time (us)              */
+      handicap, /* Number of queue cycles behind    */
+      depth;    /* Path depth                       */
 
-  u8* trace_mini;                     /* Trace bytes, if kept             */
-  u32 tc_ref;                         /* Trace bytes ref count            */
+  u8 *trace_mini; /* Trace bytes, if kept             */
+  u32 tc_ref;     /* Trace bytes ref count            */
 
-  struct queue_entry *next,           /* Next element, if any             */
-                     *next_100;       /* 100 elements ahead               */
+  struct queue_entry *next, /* Next element, if any             */
+      *next_100;            /* 100 elements ahead               */
 
-  region_t *regions;                  /* Regions keeping information of message(s) sent to the server under test */
-  u32 region_count;                   /* Total number of regions in this seed */
-  u32 index;                          /* Index of this queue entry in the whole queue */
-  u32 generating_state_id;            /* ID of the start at which the new seed was generated */
-  u8 is_initial_seed;                 /* Is this an initial seed */
-  u32 unique_state_count;             /* Unique number of states traversed by this queue entry */
-
+  region_t *regions;       /* Regions keeping information of message(s) sent to the server under test */
+  u32 region_count;        /* Total number of regions in this seed */
+  u32 index;               /* Index of this queue entry in the whole queue */
+  u32 generating_state_id; /* ID of the start at which the new seed was generated */
+  u8 is_initial_seed;      /* Is this an initial seed */
+  u32 unique_state_count;  /* Unique number of states traversed by this queue entry */
 };
 
-static struct queue_entry *queue,     /* Fuzzing queue (linked list)      */
-                          *queue_cur, /* Current offset within the queue  */
-                          *queue_top, /* Top of the list                  */
-                          *q_prev100; /* Previous 100 marker              */
+static struct queue_entry *queue, /* Fuzzing queue (linked list)      */
+    *queue_cur,                   /* Current offset within the queue  */
+    *queue_top,                   /* Top of the list                  */
+    *q_prev100;                   /* Previous 100 marker              */
 
-static struct queue_entry*
-  top_rated[MAP_SIZE];                /* Top entries for bitmap bytes     */
+static struct queue_entry *
+    top_rated[MAP_SIZE]; /* Top entries for bitmap bytes     */
 
-struct extra_data {
-  u8* data;                           /* Dictionary token data            */
-  u32 len;                            /* Dictionary token length          */
-  u32 hit_cnt;                        /* Use count in the corpus          */
+struct extra_data
+{
+  u8 *data;    /* Dictionary token data            */
+  u32 len;     /* Dictionary token length          */
+  u32 hit_cnt; /* Use count in the corpus          */
 };
 
-static struct extra_data* extras;     /* Extra tokens to fuzz with        */
-static u32 extras_cnt;                /* Total number of tokens read      */
+static struct extra_data *extras; /* Extra tokens to fuzz with        */
+static u32 extras_cnt;            /* Total number of tokens read      */
 
-static struct extra_data* a_extras;   /* Automatically selected extras    */
-static u32 a_extras_cnt;              /* Total number of tokens available */
+static struct extra_data *a_extras; /* Automatically selected extras    */
+static u32 a_extras_cnt;            /* Total number of tokens available */
 
-static u8* (*post_handler)(u8* buf, u32* len);
+static u8 *(*post_handler)(u8 *buf, u32 *len);
 
 /* Interesting values, as per config.h */
 
-static s8  interesting_8[]  = { INTERESTING_8 };
-static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
-static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
+static s8 interesting_8[] = {INTERESTING_8};
+static s16 interesting_16[] = {INTERESTING_8, INTERESTING_16};
+static s32 interesting_32[] = {INTERESTING_8, INTERESTING_16, INTERESTING_32};
 
 /* Fuzzing stages */
 
-enum {
+enum
+{
   /* 00 */ STAGE_FLIP1,
   /* 01 */ STAGE_FLIP2,
   /* 02 */ STAGE_FLIP4,
@@ -352,7 +353,8 @@ enum {
 
 /* Stage value types */
 
-enum {
+enum
+{
   /* 00 */ STAGE_VAL_NONE,
   /* 01 */ STAGE_VAL_LE,
   /* 02 */ STAGE_VAL_BE
@@ -360,7 +362,8 @@ enum {
 
 /* Execution status fault codes */
 
-enum {
+enum
+{
   /* 00 */ FAULT_NONE,
   /* 01 */ FAULT_TMOUT,
   /* 02 */ FAULT_CRASH,
@@ -369,11 +372,11 @@ enum {
   /* 05 */ FAULT_NOBITS
 };
 
-char** use_argv;  /* argument to run the target program. In vanilla AFL, this is a local variable in main. */
+char **use_argv; /* argument to run the target program. In vanilla AFL, this is a local variable in main. */
 /* add these declarations here so we can call these functions earlier */
-static u8 run_target(char** argv, u32 timeout);
+static u8 run_target(char **argv, u32 timeout);
 static inline u32 UR(u32 limit);
-static inline u8 has_new_bits(u8* virgin_map);
+static inline u8 has_new_bits(u8 *virgin_map);
 
 /* AFLNet-specific variables & functions */
 
@@ -381,13 +384,13 @@ u32 server_wait_usecs = 10000;
 u32 poll_wait_msecs = 1;
 u32 socket_timeout_usecs = 1000;
 u8 net_protocol;
-u8* net_ip;
+u8 *net_ip;
 u32 net_port;
 char *response_buf = NULL;
-int response_buf_size = 0; //the size of the whole response buffer
-u32 *response_bytes = NULL; //an array keeping accumulated response buffer size
-                            //e.g., response_bytes[i] keeps the response buffer size
-                            //once messages 0->i have been received and processed by the SUT
+int response_buf_size = 0;  // the size of the whole response buffer
+u32 *response_bytes = NULL; // an array keeping accumulated response buffer size
+                            // e.g., response_bytes[i] keeps the response buffer size
+                            // once messages 0->i have been received and processed by the SUT
 u32 max_annotated_regions = 0;
 u32 target_state_id = 0;
 u32 *state_ids = NULL;
@@ -395,16 +398,16 @@ u32 state_ids_count = 0;
 u32 selected_state_index = 0;
 u32 state_cycles = 0;
 u32 messages_sent = 0;
-EXP_ST u8 session_virgin_bits[MAP_SIZE];     /* Regions yet untouched while the SUT is still running */
-EXP_ST u8 *cleanup_script; /* script to clean up the environment of the SUT -- make fuzzing more deterministic */
-EXP_ST u8 *netns_name; /* network namespace name to run server in */
-char **was_fuzzed_map = NULL; /* A 2D array keeping state-specific was_fuzzed information */
+EXP_ST u8 session_virgin_bits[MAP_SIZE]; /* Regions yet untouched while the SUT is still running */
+EXP_ST u8 *cleanup_script;               /* script to clean up the environment of the SUT -- make fuzzing more deterministic */
+EXP_ST u8 *netns_name;                   /* network namespace name to run server in */
+char **was_fuzzed_map = NULL;            /* A 2D array keeping state-specific was_fuzzed information */
 u32 fuzzed_map_states = 0;
 u32 fuzzed_map_qentries = 0;
 u32 max_seed_region_count = 0;
-u32 local_port;		/* TCP/UDP port number to use as source */
+u32 local_port;             /* TCP/UDP port number to use as source */
 u32 *state_sequence = NULL; /* State sequence received from the server */
-u32 state_count = 0; /* Number of states in the state sequence */ 
+u32 state_count = 0;        /* Number of states in the state sequence */
 
 /* flags */
 u8 use_net = 0;
@@ -417,32 +420,32 @@ u8 corpus_read_or_sync = 0;
 u8 state_aware_mode = 0;
 u8 region_level_mutation = 0;
 u8 state_selection_algo = ROUND_ROBIN, seed_selection_algo = RANDOM_SELECTION;
-u8 feedback_type = CODE_FEEDBACK;   /* Select interesting seeds based on code feedback */
+u8 feedback_type = CODE_FEEDBACK;      /* Select interesting seeds based on code feedback */
 u8 seed_schedule_type = IPSM_SCHEDULE; /* Choose next seeds based on state machine */
 u8 code_aware_schedule = 0;
 u8 false_negative_reduction = 0;
 
 /* Implemented state machine */
-Agraph_t  *ipsm;
-static FILE* ipsm_dot_file;
+Agraph_t *ipsm;
+static FILE *ipsm_dot_file;
 
 /* Hash table/map and list */
-klist_t(lms) *kl_messages;
-khash_t(hs32) *khs_ipsm_paths;
-khash_t(hms) *khms_states;
+klist_t(lms) * kl_messages;
+khash_t(hs32) * khs_ipsm_paths;
+khash_t(hms) * khms_states;
 
-KHASH_MAP_INIT_INT64(h_edge, u32) // 定义一个 key为64位整数，value为32位整数的哈希表类型
-khash_t(h_edge) *kh_edge_traversals;  // 用于存储边 (from_state -> to_state) 的遍历次数
+KHASH_MAP_INIT_INT64(h_edge, u32)     // 定义一个 key为64位整数，value为32位整数的哈希表类型
+khash_t(h_edge) * kh_edge_traversals; // 用于存储边 (from_state -> to_state) 的遍历次数
 
-//M2_prev points to the last message of M1 (i.e., prefix)
-//If M1 is empty, M2_prev == NULL
-//M2_next points to the first message of M3 (i.e., suffix)
-//If M3 is empty, M2_next point to the end of the kl_messages linked list
-kliter_t(lms) *M2_prev, *M2_next;
+// M2_prev points to the last message of M1 (i.e., prefix)
+// If M1 is empty, M2_prev == NULL
+// M2_next points to the first message of M3 (i.e., suffix)
+// If M3 is empty, M2_next point to the end of the kl_messages linked list
+kliter_t(lms) * M2_prev, *M2_next;
 
-//Function pointers pointing to Protocol-specific functions
-unsigned int* (*extract_response_codes)(unsigned char* buf, unsigned int buf_size, unsigned int* state_count_ref) = NULL;
-region_t* (*extract_requests)(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref) = NULL;
+// Function pointers pointing to Protocol-specific functions
+unsigned int *(*extract_response_codes)(unsigned char *buf, unsigned int buf_size, unsigned int *state_count_ref) = NULL;
+region_t *(*extract_requests)(unsigned char *buf, unsigned int buf_size, unsigned int *region_count_ref) = NULL;
 
 static void write_ipsm_dot_file(void);
 static u64 get_cur_time(void);
@@ -452,8 +455,8 @@ void setup_ipsm()
 {
   ipsm = agopen("g", Agdirected, 0);
 
-  agattr(ipsm, AGNODE, "color", "black"); //Default node colr is black
-  agattr(ipsm, AGEDGE, "color", "black"); //Default edge color is black
+  agattr(ipsm, AGNODE, "color", "black"); // Default node colr is black
+  agattr(ipsm, AGEDGE, "color", "black"); // Default edge color is black
 
   khs_ipsm_paths = kh_init(hs32);
 
@@ -471,7 +474,7 @@ void destroy_ipsm()
   kh_destroy(hs32, khs_ipsm_paths);
 
   state_info_t *state;
-  kh_foreach_value(khms_states, state, {ck_free(state->seeds); ck_free(state);});
+  kh_foreach_value(khms_states, state, {ck_free(state->seeds); ck_free(state); });
   kh_destroy(hms, khms_states);
 
   // ++ 新增销毁代码 ++
@@ -481,76 +484,91 @@ void destroy_ipsm()
 }
 
 /* Get state index in the state IDs list, given a state ID */
-u32 get_state_index(u32 state_id) {
+u32 get_state_index(u32 state_id)
+{
   u32 index = 0;
-  for (index = 0; index < state_ids_count; index++) {
-    if (state_ids[index] == state_id) break;
+  for (index = 0; index < state_ids_count; index++)
+  {
+    if (state_ids[index] == state_id)
+      break;
   }
   return index;
 }
 
 /* Expand the size of the map when a new seed or a new state has been discovered */
-void expand_was_fuzzed_map(u32 new_states, u32 new_qentries) {
+void expand_was_fuzzed_map(u32 new_states, u32 new_qentries)
+{
   int i, j;
-  //Realloc the memory
+  // Realloc the memory
   was_fuzzed_map = (char **)ck_realloc(was_fuzzed_map, (fuzzed_map_states + new_states) * sizeof(char *));
   for (i = 0; i < fuzzed_map_states + new_states; i++)
     was_fuzzed_map[i] = (char *)ck_realloc(was_fuzzed_map[i], (fuzzed_map_qentries + new_qentries) * sizeof(char));
 
-  //All new cells are marked as -1 -- meaning UNREACHABLE
-  //Keep other cells untouched
+  // All new cells are marked as -1 -- meaning UNREACHABLE
+  // Keep other cells untouched
   for (i = 0; i < fuzzed_map_states + new_states; i++)
     for (j = 0; j < fuzzed_map_qentries + new_qentries; j++)
-       if ((i >= fuzzed_map_states) || (j >= fuzzed_map_qentries)) was_fuzzed_map[i][j] = -1;
+      if ((i >= fuzzed_map_states) || (j >= fuzzed_map_qentries))
+        was_fuzzed_map[i][j] = -1;
 
-  //Update total number of states (rows) and total number of queue entries (columns) in the was_fuzzed_map
+  // Update total number of states (rows) and total number of queue entries (columns) in the was_fuzzed_map
   fuzzed_map_states += new_states;
   fuzzed_map_qentries += new_qentries;
 }
 
 /* Store state coverage feedback into the right of the bitmap */
-void update_state_bitmap(){
+void update_state_bitmap()
+{
 
-  if (state_sequence) {
+  if (state_sequence)
+  {
     ck_free(state_sequence);
     state_sequence = NULL;
   }
   state_sequence = (*extract_response_codes)(response_buf, response_buf_size, &state_count);
 
-  if(feedback_type != STATE_FEEDBACK && feedback_type != CODE_STATE_FEEDBACK) return;
+  if (feedback_type != STATE_FEEDBACK && feedback_type != CODE_STATE_FEEDBACK)
+    return;
 
   u32 prev_state = 0;
 
-  for (u32 i = 0; i < state_count; i++) {
+  for (u32 i = 0; i < state_count; i++)
+  {
     u32 cur_state = state_sequence[i];
 
-    u16 map_ptr_idx = (prev_state * STATE_SIZE  + cur_state) % SHIFT_SIZE;
+    u16 map_ptr_idx = (prev_state * STATE_SIZE + cur_state) % SHIFT_SIZE;
     trace_bits[map_ptr_idx]++;
 
     prev_state = cur_state;
   }
-
 }
 
 /* Check if a state sequence is interesting (e.g., new state is discovered). Loop is taken into account */
-u8 is_state_sequence_interesting(unsigned int *state_sequence, unsigned int state_count) {
-  //limit the loop count to only 1
+u8 is_state_sequence_interesting(unsigned int *state_sequence, unsigned int state_count)
+{
+  // limit the loop count to only 1
   u32 *trimmed_state_sequence = NULL;
   u32 i, count = 0;
-  for (i=0; i < state_count; i++) {
-    if ((i >= 2) && (state_sequence[i] == state_sequence[i - 1]) && (state_sequence[i] == state_sequence[i - 2])) continue;
+  for (i = 0; i < state_count; i++)
+  {
+    if ((i >= 2) && (state_sequence[i] == state_sequence[i - 1]) && (state_sequence[i] == state_sequence[i - 2]))
+      continue;
     count++;
     trimmed_state_sequence = (u32 *)realloc(trimmed_state_sequence, count * sizeof(unsigned int));
     trimmed_state_sequence[count - 1] = state_sequence[i];
   }
 
-  //Calculate the hash based on the shortened state sequence
+  // Calculate the hash based on the shortened state sequence
   u32 hashKey = hash32(trimmed_state_sequence, count * sizeof(unsigned int), 0);
-  if (trimmed_state_sequence) free(trimmed_state_sequence);
+  if (trimmed_state_sequence)
+    free(trimmed_state_sequence);
 
-  if (kh_get(hs32, khs_ipsm_paths, hashKey) != kh_end(khs_ipsm_paths)) {
+  if (kh_get(hs32, khs_ipsm_paths, hashKey) != kh_end(khs_ipsm_paths))
+  {
     return 0;
-  } else {
+  }
+  else
+  {
     int dummy;
     kh_put(hs32, khs_ipsm_paths, hashKey, &dummy);
     return 1;
@@ -558,15 +576,19 @@ u8 is_state_sequence_interesting(unsigned int *state_sequence, unsigned int stat
 }
 
 /* Update the annotations of regions (i.e., state sequence received from the server) */
-void update_region_annotations(struct queue_entry* q)
+void update_region_annotations(struct queue_entry *q)
 {
   u32 i = 0;
 
-  for (i = 0; i < messages_sent; i++) {
-    if ((response_bytes[i] == 0) || ( i > 0 && (response_bytes[i] - response_bytes[i - 1] == 0))) {
+  for (i = 0; i < messages_sent; i++)
+  {
+    if ((response_bytes[i] == 0) || (i > 0 && (response_bytes[i] - response_bytes[i - 1] == 0)))
+    {
       q->regions[i].state_sequence = NULL;
       q->regions[i].state_count = 0;
-    } else {
+    }
+    else
+    {
       unsigned int cur_state_count;
       q->regions[i].state_sequence = (*extract_response_codes)(response_buf, response_bytes[i], &cur_state_count);
       q->regions[i].state_count = cur_state_count;
@@ -575,27 +597,32 @@ void update_region_annotations(struct queue_entry* q)
 }
 
 /* Choose a region data for region-level mutations */
-u8* choose_source_region(u32 *out_len) {
+u8 *choose_source_region(u32 *out_len)
+{
   u8 *out = NULL;
   *out_len = 0;
   struct queue_entry *q = queue;
 
-  //randomly select a seed
+  // randomly select a seed
   u32 index = UR(queued_paths);
-  while (index != 0) {
+  while (index != 0)
+  {
     q = q->next;
     index--;
   }
 
-  //randomly select a region in the selected seed
-  if (q->region_count) {
+  // randomly select a region in the selected seed
+  if (q->region_count)
+  {
     u32 reg_index = UR(q->region_count);
     u32 len = q->regions[reg_index].end_byte - q->regions[reg_index].start_byte + 1;
-    if (len <= MAX_FILE) {
+    if (len <= MAX_FILE)
+    {
       out = (u8 *)ck_alloc(len);
-      if (out == NULL) PFATAL("Unable allocate a memory region to store a region");
+      if (out == NULL)
+        PFATAL("Unable allocate a memory region to store a region");
       *out_len = len;
-      //Read region data into memory. */
+      // Read region data into memory. */
       FILE *fp = fopen(q->fname, "rb");
       fseek(fp, q->regions[reg_index].start_byte, SEEK_CUR);
       fread(out, 1, len, fp);
@@ -607,23 +634,29 @@ u8* choose_source_region(u32 *out_len) {
 }
 
 /* Update #fuzzs visiting a specific state */
-void update_fuzzs() {
+void update_fuzzs()
+{
   unsigned int i, discard;
 
-  //A hash set is used so that the #paths is not updated more than once for one specific state
-  khash_t(hs32) *khs_state_ids;
+  // A hash set is used so that the #paths is not updated more than once for one specific state
+  khash_t(hs32) * khs_state_ids;
   khint_t k;
   khs_state_ids = kh_init(hs32);
 
-  for(i = 0; i < state_count; i++) {
+  for (i = 0; i < state_count; i++)
+  {
     unsigned int state_id = state_sequence[i];
 
-    if (kh_get(hs32, khs_state_ids, state_id) != kh_end(khs_state_ids)) {
+    if (kh_get(hs32, khs_state_ids, state_id) != kh_end(khs_state_ids))
+    {
       continue;
-    } else {
+    }
+    else
+    {
       kh_put(hs32, khs_state_ids, state_id, &discard);
       k = kh_get(hms, khms_states, state_id);
-      if (k != kh_end(khms_states)) {
+      if (k != kh_end(khms_states))
+      {
         kh_val(khms_states, k)->fuzzs++;
       }
     }
@@ -633,45 +666,57 @@ void update_fuzzs() {
 }
 
 /* Return the index of the "region" containing a given value */
-u32 index_search(u32 *A, u32 n, u32 val) {
+u32 index_search(u32 *A, u32 n, u32 val)
+{
   u32 index = 0;
-  for(index = 0; index < n; index++) {
-    if (val <= A[index]) break;
+  for (index = 0; index < n; index++)
+  {
+    if (val <= A[index])
+      break;
   }
   return index;
 }
 
 /* Calculate state scores and select the next state */
-u32 update_scores_and_select_next_state(u8 mode) {
+u32 update_scores_and_select_next_state(u8 mode)
+{
   u32 result = 0, i;
 
-  if (state_ids_count == 0) return 0;
+  if (state_ids_count == 0)
+    return 0;
 
   u32 *state_scores = NULL;
   state_scores = (u32 *)ck_alloc(state_ids_count * sizeof(u32));
-  if (!state_scores) PFATAL("Cannot allocate memory for state_scores");
+  if (!state_scores)
+    PFATAL("Cannot allocate memory for state_scores");
 
   khint_t k;
   state_info_t *state;
-  //Update the states' score
-  for(i = 0; i < state_ids_count; i++) {
+  // Update the states' score
+  for (i = 0; i < state_ids_count; i++)
+  {
     u32 state_id = state_ids[i];
 
     k = kh_get(hms, khms_states, state_id);
-    if (k != kh_end(khms_states)) {
+    if (k != kh_end(khms_states))
+    {
       state = kh_val(khms_states, k);
-      switch(mode) {
-        case FAVOR:
-          // state->score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * pow(2, log(state->paths_discovered + 1)));
-          state->score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * (state->paths_discovered + 1));
-          break;
-        //other cases are reserved
+      switch (mode)
+      {
+      case FAVOR:
+        // state->score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * pow(2, log(state->paths_discovered + 1)));
+        state->score = ceil(1000 * pow(2, -log10(log10(state->fuzzs + 1) * state->selected_times + 1)) * (state->paths_discovered + 1));
+        break;
+        // other cases are reserved
       }
 
-      if (i == 0) {
+      if (i == 0)
+      {
         state_scores[i] = state->score;
-      } else {
-        state_scores[i] = state_scores[i-1] + state->score;
+      }
+      else
+      {
+        state_scores[i] = state_scores[i - 1] + state->score;
       }
     }
   }
@@ -680,7 +725,8 @@ u32 update_scores_and_select_next_state(u8 mode) {
   u32 idx = index_search(state_scores, state_ids_count, randV);
   result = state_ids[idx];
 
-  if (state_scores) ck_free(state_scores);
+  if (state_scores)
+    ck_free(state_scores);
   return result;
 }
 
@@ -697,7 +743,6 @@ u32 update_scores_and_select_next_state(u8 mode) {
 //     }
 //   }
 //   if (total_edge_traversals == 0) total_edge_traversals = 1; // 避免除以0
-
 
 //   u32 *state_scores = NULL;
 //   state_scores = (u32 *)ck_alloc(state_ids_count * sizeof(u32));
@@ -727,10 +772,10 @@ u32 update_scores_and_select_next_state(u8 mode) {
 
 //       // 1. 新状态奖励
 //       if (queue_cycle - state->discovered_at_cycle < NEW_STATE_CYCLE_WINDOW) {
-//         bonus_factor += (NEW_STATE_BONUS_MULTIPLIER - 1.0) * 
+//         bonus_factor += (NEW_STATE_BONUS_MULTIPLIER - 1.0) *
 //                         (1.0 - (double)(queue_cycle - state->discovered_at_cycle) / NEW_STATE_CYCLE_WINDOW);
 //       }
-      
+
 //       // 2. 稀有路径奖励
 //       // 找到该状态的所有出边，计算平均稀有度
 //       char state_str[STATE_STR_LEN];
@@ -744,13 +789,13 @@ u32 update_scores_and_select_next_state(u8 mode) {
 //           out_edge_count++;
 //           u32 to_state_id = atoi(agnameof(aghead(e)));
 //           u64 edge_key = ((u64)state_id << 32) | to_state_id;
-          
+
 //           khint_t k_edge_count = kh_get(h_edge, kh_edge_traversals, edge_key);
 //           u32 traversal_count = 1;
 //           if (k_edge_count != kh_end(kh_edge_traversals)) {
 //             traversal_count = kh_value(kh_edge_traversals, k_edge_count);
 //           }
-          
+
 //           // 稀有度与遍历次数成反比，并进行归一化
 //           total_rarity += (double)total_edge_traversals / traversal_count;
 //         }
@@ -786,35 +831,40 @@ u32 update_scores_and_select_next_state(u8 mode) {
 // }
 
 /* Select a target state at which we do state-aware fuzzing */
-unsigned int choose_target_state(u8 mode) {
+unsigned int choose_target_state(u8 mode)
+{
   u32 result = 0;
 
-  switch (mode) {
-    case RANDOM_SELECTION: //Random state selection
-      selected_state_index = UR(state_ids_count);
-      result = state_ids[selected_state_index];
-      break;
-    case ROUND_ROBIN: //Round-robin state selection
+  switch (mode)
+  {
+  case RANDOM_SELECTION: // Random state selection
+    selected_state_index = UR(state_ids_count);
+    result = state_ids[selected_state_index];
+    break;
+  case ROUND_ROBIN: // Round-robin state selection
+    result = state_ids[selected_state_index];
+    selected_state_index++;
+    if (selected_state_index == state_ids_count)
+      selected_state_index = 0;
+    break;
+  case FAVOR:
+    /* Do ROUND_ROBIN for a few cycles to get enough statistical information*/
+    if (state_cycles < min(5, log2(state_ids_count)))
+    {
       result = state_ids[selected_state_index];
       selected_state_index++;
-      if (selected_state_index == state_ids_count) selected_state_index = 0;
-      break;
-    case FAVOR:
-      /* Do ROUND_ROBIN for a few cycles to get enough statistical information*/
-      if (state_cycles < min(5, log2(state_ids_count))) {
-        result = state_ids[selected_state_index];
-        selected_state_index++;
-        if (selected_state_index == state_ids_count) {
-          selected_state_index = 0;
-          state_cycles++;
-        }
-        break;
+      if (selected_state_index == state_ids_count)
+      {
+        selected_state_index = 0;
+        state_cycles++;
       }
+      break;
+    }
 
-      result = update_scores_and_select_next_state(FAVOR);
-      break;
-    default:
-      break;
+    result = update_scores_and_select_next_state(FAVOR);
+    break;
+  default:
+    break;
   }
 
   return result;
@@ -828,71 +878,95 @@ struct queue_entry *choose_seed(u32 target_state_id, u8 mode)
   struct queue_entry *result = NULL;
 
   k = kh_get(hms, khms_states, target_state_id);
-  if (k != kh_end(khms_states)) {
+  if (k != kh_end(khms_states))
+  {
     state = kh_val(khms_states, k);
 
-    if (state->seeds_count == 0) return NULL;
+    if (state->seeds_count == 0)
+      return NULL;
 
-    switch (mode) {
-      case RANDOM_SELECTION: //Random seed selection
-        state->selected_seed_index = UR(state->seeds_count);
-        result = state->seeds[state->selected_seed_index];
-        break;
-      case ROUND_ROBIN: //Round-robin seed selection
+    switch (mode)
+    {
+    case RANDOM_SELECTION: // Random seed selection
+      state->selected_seed_index = UR(state->seeds_count);
+      result = state->seeds[state->selected_seed_index];
+      break;
+    case ROUND_ROBIN: // Round-robin seed selection
+      result = state->seeds[state->selected_seed_index];
+      state->selected_seed_index++;
+      if (state->selected_seed_index == state->seeds_count)
+        state->selected_seed_index = 0;
+      break;
+    case FAVOR:
+      if (state->seeds_count > 10)
+      {
+        // Do seed selection similar to AFL + take into account state-aware information
+        // e.g., was_fuzzed information becomes state-aware
+        u32 passed_cycles = 0;
+        while (passed_cycles < 5)
+        {
+          result = state->seeds[state->selected_seed_index];
+          if (state->selected_seed_index + 1 == state->seeds_count)
+          {
+            state->selected_seed_index = 0;
+            passed_cycles++;
+          }
+          else
+            state->selected_seed_index++;
+
+          // Skip this seed with high probability if it is neither an initial seed nor a seed generated while the
+          // current target_state_id was targeted
+          if (result->generating_state_id != target_state_id && !result->is_initial_seed && UR(100) < 90)
+            continue;
+
+          u32 target_state_index = get_state_index(target_state_id);
+          if (pending_favored)
+          {
+            /* If we have any favored, non-fuzzed new arrivals in the queue,
+               possibly skip to them at the expense of already-fuzzed or non-favored
+               cases. */
+            if (((was_fuzzed_map[target_state_index][result->index] == 1) || !result->favored) && UR(100) < SKIP_TO_NEW_PROB)
+              continue;
+
+            /* Otherwise, this seed is selected */
+            break;
+          }
+          else if (!result->favored && queued_paths > 10)
+          {
+            /* Otherwise, still possibly skip non-favored cases, albeit less often.
+               The odds of skipping stuff are higher for already-fuzzed inputs and
+               lower for never-fuzzed entries. */
+            if (queue_cycle > 1 && (was_fuzzed_map[target_state_index][result->index] == 0))
+            {
+              if (UR(100) < SKIP_NFAV_NEW_PROB)
+                continue;
+            }
+            else
+            {
+              if (UR(100) < SKIP_NFAV_OLD_PROB)
+                continue;
+            }
+
+            /* Otherwise, this seed is selected */
+            break;
+          }
+        }
+      }
+      else
+      {
+        // Do Round-robin if seeds_count of the selected state is small
         result = state->seeds[state->selected_seed_index];
         state->selected_seed_index++;
-        if (state->selected_seed_index == state->seeds_count) state->selected_seed_index = 0;
-        break;
-      case FAVOR:
-        if (state->seeds_count > 10) {
-          //Do seed selection similar to AFL + take into account state-aware information
-          //e.g., was_fuzzed information becomes state-aware
-          u32 passed_cycles = 0;
-          while (passed_cycles < 5) {
-            result = state->seeds[state->selected_seed_index];
-            if (state->selected_seed_index + 1 == state->seeds_count) {
-              state->selected_seed_index = 0;
-              passed_cycles++;
-            } else state->selected_seed_index++;
-
-            //Skip this seed with high probability if it is neither an initial seed nor a seed generated while the
-            //current target_state_id was targeted
-            if (result->generating_state_id != target_state_id && !result->is_initial_seed && UR(100) < 90) continue;
-
-            u32 target_state_index = get_state_index(target_state_id);
-            if (pending_favored) {
-              /* If we have any favored, non-fuzzed new arrivals in the queue,
-                 possibly skip to them at the expense of already-fuzzed or non-favored
-                 cases. */
-              if (((was_fuzzed_map[target_state_index][result->index] == 1) || !result->favored) && UR(100) < SKIP_TO_NEW_PROB) continue;
-
-              /* Otherwise, this seed is selected */
-              break;
-            } else if (!result->favored && queued_paths > 10) {
-              /* Otherwise, still possibly skip non-favored cases, albeit less often.
-                 The odds of skipping stuff are higher for already-fuzzed inputs and
-                 lower for never-fuzzed entries. */
-              if (queue_cycle > 1 && (was_fuzzed_map[target_state_index][result->index] == 0)) {
-                if (UR(100) < SKIP_NFAV_NEW_PROB) continue;
-              } else {
-                if (UR(100) < SKIP_NFAV_OLD_PROB) continue;
-              }
-
-              /* Otherwise, this seed is selected */
-              break;
-            }
-          }
-        } else {
-          //Do Round-robin if seeds_count of the selected state is small
-          result = state->seeds[state->selected_seed_index];
-          state->selected_seed_index++;
-          if (state->selected_seed_index == state->seeds_count) state->selected_seed_index = 0;
-        }
-        break;
-      default:
-        break;
+        if (state->selected_seed_index == state->seeds_count)
+          state->selected_seed_index = 0;
+      }
+      break;
+    default:
+      break;
     }
-  } else {
+  }
+  else
+  {
     PFATAL("AFLNet - the states hashtable has no entries for state %d", target_state_id);
   }
 
@@ -906,42 +980,49 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
   int discard, i;
   state_info_t *state;
 
-  if (!response_buf_size || !response_bytes) return;
+  if (!response_buf_size || !response_bytes)
+    return;
 
-  if (is_state_sequence_interesting(state_sequence, state_count)) {
-    
+  if (is_state_sequence_interesting(state_sequence, state_count))
+  {
+
     new_paths_since_dot++;
 
-    //Save the current kl_messages to a file which can be used to replay the newly discovered paths on the ipsm
+    // Save the current kl_messages to a file which can be used to replay the newly discovered paths on the ipsm
     u8 *temp_str = state_sequence_to_string(state_sequence, state_count);
     u8 *fname = alloc_printf("%s/replayable-new-ipsm-paths/id:%s:%s", out_dir, temp_str, dry_run ? basename(q->fname) : "new");
     save_kl_messages_to_file(kl_messages, fname, 1, messages_sent);
     ck_free(temp_str);
     ck_free(fname);
 
-    //Update the IPSM graph
-    if (state_count > 1) {
+    // Update the IPSM graph
+    if (state_count > 1)
+    {
       unsigned int prevStateID = state_sequence[0];
 
-      for(i=1; i < state_count; i++) {
+      for (i = 1; i < state_count; i++)
+      {
         unsigned int curStateID = state_sequence[i];
         char fromState[STATE_STR_LEN], toState[STATE_STR_LEN];
         snprintf(fromState, STATE_STR_LEN, "%d", prevStateID);
         snprintf(toState, STATE_STR_LEN, "%d", curStateID);
 
-        //Check if the prevStateID and curStateID have been added to the state machine as vertices
-        //Check also if the edge prevStateID->curStateID has been added
+        // Check if the prevStateID and curStateID have been added to the state machine as vertices
+        // Check also if the edge prevStateID->curStateID has been added
         Agnode_t *from, *to;
-		    Agedge_t *edge;
-		    from = agnode(ipsm, fromState, FALSE);
-		    if (!from) {
-          //Add a node to the graph
+        Agedge_t *edge;
+        from = agnode(ipsm, fromState, FALSE);
+        if (!from)
+        {
+          // Add a node to the graph
           from = agnode(ipsm, fromState, TRUE);
-          if (dry_run) agset(from,"color","blue");
-          else agset(from,"color","red");
+          if (dry_run)
+            agset(from, "color", "blue");
+          else
+            agset(from, "color", "red");
 
-          //Insert this newly discovered state into the states hashtable
-          state_info_t *newState_From = (state_info_t *) ck_alloc (sizeof(state_info_t));
+          // Insert this newly discovered state into the states hashtable
+          state_info_t *newState_From = (state_info_t *)ck_alloc(sizeof(state_info_t));
           newState_From->id = prevStateID;
           newState_From->is_covered = 1;
           newState_From->paths = 0;
@@ -959,22 +1040,26 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
           k = kh_put(hms, khms_states, prevStateID, &discard);
           kh_value(khms_states, k) = newState_From;
 
-          //Insert this into the state_ids array too
-          state_ids = (u32 *) ck_realloc(state_ids, (state_ids_count + 1) * sizeof(u32));
+          // Insert this into the state_ids array too
+          state_ids = (u32 *)ck_realloc(state_ids, (state_ids_count + 1) * sizeof(u32));
           state_ids[state_ids_count++] = prevStateID;
 
-          if (prevStateID != 0) expand_was_fuzzed_map(1, 0);
+          if (prevStateID != 0)
+            expand_was_fuzzed_map(1, 0);
         }
 
-		    to = agnode(ipsm, toState, FALSE);
-		    if (!to) {
-          //Add a node to the graph
+        to = agnode(ipsm, toState, FALSE);
+        if (!to)
+        {
+          // Add a node to the graph
           to = agnode(ipsm, toState, TRUE);
-          if (dry_run) agset(to,"color","blue");
-          else agset(to,"color","red");
+          if (dry_run)
+            agset(to, "color", "blue");
+          else
+            agset(to, "color", "red");
 
-          //Insert this newly discovered state into the states hashtable
-          state_info_t *newState_To = (state_info_t *) ck_alloc (sizeof(state_info_t));
+          // Insert this newly discovered state into the states hashtable
+          state_info_t *newState_To = (state_info_t *)ck_alloc(sizeof(state_info_t));
           newState_To->id = curStateID;
           newState_To->is_covered = 1;
           newState_To->paths = 0;
@@ -992,83 +1077,96 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
           k = kh_put(hms, khms_states, curStateID, &discard);
           kh_value(khms_states, k) = newState_To;
 
-          //Insert this into the state_ids array too
-          state_ids = (u32 *) ck_realloc(state_ids, (state_ids_count + 1) * sizeof(u32));
+          // Insert this into the state_ids array too
+          state_ids = (u32 *)ck_realloc(state_ids, (state_ids_count + 1) * sizeof(u32));
           state_ids[state_ids_count++] = curStateID;
 
-          if (curStateID != 0) expand_was_fuzzed_map(1, 0);
+          if (curStateID != 0)
+            expand_was_fuzzed_map(1, 0);
         }
 
-        //Check if an edge from->to exists
-		    edge = agedge(ipsm, from, to, NULL, FALSE);
-		    if (!edge) {
-          //Add an edge to the graph
-			    edge = agedge(ipsm, from, to, "new_edge", TRUE);
-          if (dry_run) agset(edge, "color", "blue");
-          else agset(edge, "color", "red");
-		    }
+        // Check if an edge from->to exists
+        edge = agedge(ipsm, from, to, NULL, FALSE);
+        if (!edge)
+        {
+          // Add an edge to the graph
+          edge = agedge(ipsm, from, to, "new_edge", TRUE);
+          if (dry_run)
+            agset(edge, "color", "blue");
+          else
+            agset(edge, "color", "red");
+        }
 
-        //Update prevStateID
+        // Update prevStateID
         prevStateID = curStateID;
       }
     }
 
-    //Update the dot file
+    // Update the dot file
     /*****************************************************************
      * 修改后的代码: 检查时间间隔，如果满足条件则更新 .dot 文件 (MODIFIED CODE) *
      *****************************************************************/
     /* Periodically update the .dot file, not on every single change. */
     u64 cur_ms = get_cur_time();
-      if ((new_paths_since_dot >= IPSM_DOT_NEW_PATH_LIMIT) ||
-          (cur_ms - last_ipsm_dot_ms > IPSM_DOT_UPDATE_SEC * 1000)) {
-        write_ipsm_dot_file();
-      }
+    if ((new_paths_since_dot >= IPSM_DOT_NEW_PATH_LIMIT) ||
+        (cur_ms - last_ipsm_dot_ms > IPSM_DOT_UPDATE_SEC * 1000))
+    {
+      write_ipsm_dot_file();
+    }
     /*****************************************************************
      *                           结束修改                            *
      *****************************************************************/
   }
 
-  //Update others no matter the new seed leads to interesting state sequence or not
+  // Update others no matter the new seed leads to interesting state sequence or not
 
-  //Annotate the regions
+  // Annotate the regions
   update_region_annotations(q);
 
-  //Update the states hashtable to keep the list of seeds which help us to reach a specific state
-  //Iterate over the regions & their annotated state (sub)sequences and update the hashtable accordingly
-  //All seed should "reach" state 0 (initial state) so we add this one to the map first
+  // Update the states hashtable to keep the list of seeds which help us to reach a specific state
+  // Iterate over the regions & their annotated state (sub)sequences and update the hashtable accordingly
+  // All seed should "reach" state 0 (initial state) so we add this one to the map first
   k = kh_get(hms, khms_states, 0);
-  if (k != kh_end(khms_states)) {
+  if (k != kh_end(khms_states))
+  {
     state = kh_val(khms_states, k);
-    state->seeds = (void **) ck_realloc (state->seeds, (state->seeds_count + 1) * sizeof(void *));
+    state->seeds = (void **)ck_realloc(state->seeds, (state->seeds_count + 1) * sizeof(void *));
     state->seeds[state->seeds_count] = (void *)q;
     state->seeds_count++;
 
-    was_fuzzed_map[0][q->index] = 0; //Mark it as reachable but not fuzzed
-  } else {
+    was_fuzzed_map[0][q->index] = 0; // Mark it as reachable but not fuzzed
+  }
+  else
+  {
     PFATAL("AFLNet - the states hashtable should always contain an entry of the initial state");
   }
 
-  //Now update other states
-  for(i = 0; i < q->region_count; i++) {
+  // Now update other states
+  for (i = 0; i < q->region_count; i++)
+  {
     unsigned int regional_state_count = q->regions[i].state_count;
-    if (regional_state_count > 0) {
-      //reachable_state_id is the last ID in the state_sequence
+    if (regional_state_count > 0)
+    {
+      // reachable_state_id is the last ID in the state_sequence
       unsigned int reachable_state_id = q->regions[i].state_sequence[regional_state_count - 1];
 
       k = kh_get(hms, khms_states, reachable_state_id);
-      if (k != kh_end(khms_states)) {
+      if (k != kh_end(khms_states))
+      {
         state = kh_val(khms_states, k);
-        state->seeds = (void **) ck_realloc (state->seeds, (state->seeds_count + 1) * sizeof(void *));
+        state->seeds = (void **)ck_realloc(state->seeds, (state->seeds_count + 1) * sizeof(void *));
         state->seeds[state->seeds_count] = (void *)q;
         state->seeds_count++;
-      } else {
-        //XXX. This branch is supposed to be not reachable
-        //However, due to some undeterminism, new state could be seen during regions' annotating process
-        //even though the state was not observed before
-        //To completely fix this, we should fix all causes leading to potential undeterminism
-        //For now, we just add the state into the hashtable
+      }
+      else
+      {
+        // XXX. This branch is supposed to be not reachable
+        // However, due to some undeterminism, new state could be seen during regions' annotating process
+        // even though the state was not observed before
+        // To completely fix this, we should fix all causes leading to potential undeterminism
+        // For now, we just add the state into the hashtable
 
-        state_info_t *newState = (state_info_t *) ck_alloc (sizeof(state_info_t));
+        state_info_t *newState = (state_info_t *)ck_alloc(sizeof(state_info_t));
         newState->id = reachable_state_id;
         newState->is_covered = 1;
         newState->paths = 0;
@@ -1078,75 +1176,87 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
         newState->score = 1;
         newState->selected_seed_index = 0;
         newState->seeds = NULL;
-        newState->seeds = (void **) ck_realloc (newState->seeds, sizeof(void *));
+        newState->seeds = (void **)ck_realloc(newState->seeds, sizeof(void *));
         newState->seeds[0] = (void *)q;
         newState->seeds_count = 1;
 
         k = kh_put(hms, khms_states, reachable_state_id, &discard);
         kh_value(khms_states, k) = newState;
 
-        //Insert this into the state_ids array too
-        state_ids = (u32 *) ck_realloc(state_ids, (state_ids_count + 1) * sizeof(u32));
+        // Insert this into the state_ids array too
+        state_ids = (u32 *)ck_realloc(state_ids, (state_ids_count + 1) * sizeof(u32));
         state_ids[state_ids_count++] = reachable_state_id;
 
-        if (reachable_state_id != 0) expand_was_fuzzed_map(1, 0);
+        if (reachable_state_id != 0)
+          expand_was_fuzzed_map(1, 0);
       }
 
-      was_fuzzed_map[get_state_index(reachable_state_id)][q->index] = 0; //Mark it as reachable but not fuzzed
+      was_fuzzed_map[get_state_index(reachable_state_id)][q->index] = 0; // Mark it as reachable but not fuzzed
     }
   }
 
-  //Update the number of paths which have traversed a specific state
-  //It can be used for calculating fuzzing energy
-  //A hash set is used so that the #paths is not updated more than once for one specific state
-  khash_t(hs32) *khs_state_ids;
+  // Update the number of paths which have traversed a specific state
+  // It can be used for calculating fuzzing energy
+  // A hash set is used so that the #paths is not updated more than once for one specific state
+  khash_t(hs32) * khs_state_ids;
   khs_state_ids = kh_init(hs32);
 
-  for(i = 0; i < state_count; i++) {
+  for (i = 0; i < state_count; i++)
+  {
     unsigned int state_id = state_sequence[i];
 
-    if (kh_get(hs32, khs_state_ids, state_id) != kh_end(khs_state_ids)) {
+    if (kh_get(hs32, khs_state_ids, state_id) != kh_end(khs_state_ids))
+    {
       continue;
-    } else {
+    }
+    else
+    {
       kh_put(hs32, khs_state_ids, state_id, &discard);
       k = kh_get(hms, khms_states, state_id);
-      if (k != kh_end(khms_states)) {
+      if (k != kh_end(khms_states))
+      {
         kh_val(khms_states, k)->paths++;
       }
     }
   }
   kh_destroy(hs32, khs_state_ids);
 
-  //Update paths_discovered
-  if (!dry_run) {
+  // Update paths_discovered
+  if (!dry_run)
+  {
     k = kh_get(hms, khms_states, target_state_id);
-    if (k != kh_end(khms_states)) {
+    if (k != kh_end(khms_states))
+    {
       kh_val(khms_states, k)->paths_discovered++;
     }
   }
 
-  if (state_count > 1) {
-    for (i = 1; i < state_count; i++) {
+  if (state_count > 1)
+  {
+    for (i = 1; i < state_count; i++)
+    {
       u32 from_state = state_sequence[i - 1];
       u32 to_state = state_sequence[i];
-    
+
       // 将两个32位ID打包成一个64位key
       u64 edge_key = ((u64)from_state << 32) | to_state;
-    
+
       khint_t k_edge = kh_get(h_edge, kh_edge_traversals, edge_key);
-    
-      if (k_edge == kh_end(kh_edge_traversals)) {
+
+      if (k_edge == kh_end(kh_edge_traversals))
+      {
         // 第一次遇到这条边
         int ret;
         k_edge = kh_put(h_edge, kh_edge_traversals, edge_key, &ret);
         kh_value(kh_edge_traversals, k_edge) = 1;
-      } else {
+      }
+      else
+      {
         // 增加计数
         kh_value(kh_edge_traversals, k_edge)++;
       }
     }
   }
-
 }
 
 /* Send (mutated) messages in order to the server under test */
@@ -1157,37 +1267,41 @@ int send_over_network()
   struct sockaddr_in serv_addr;
   struct sockaddr_in local_serv_addr;
 
-  //Clean up the server if needed
-  if (cleanup_script) system(cleanup_script);
+  // Clean up the server if needed
+  if (cleanup_script)
+    system(cleanup_script);
 
-  //Wait a bit for the server initialization
+  // Wait a bit for the server initialization
   usleep(server_wait_usecs);
 
-  //Clear the response buffer and reset the response buffer size
-  if (response_buf) {
+  // Clear the response buffer and reset the response buffer size
+  if (response_buf)
+  {
     ck_free(response_buf);
     response_buf = NULL;
     response_buf_size = 0;
   }
 
-  if (response_bytes) {
+  if (response_bytes)
+  {
     ck_free(response_bytes);
     response_bytes = NULL;
   }
 
-  //Create a TCP/UDP socket
+  // Create a TCP/UDP socket
   int sockfd = -1;
   if (net_protocol == PRO_TCP)
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
   else if (net_protocol == PRO_UDP)
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 
-  if (sockfd < 0) {
+  if (sockfd < 0)
+  {
     PFATAL("Cannot create a socket");
   }
 
-  //Set timeout for socket data sending/receiving -- otherwise it causes a big delay
-  //if the server is still alive after processing all the requests
+  // Set timeout for socket data sending/receiving -- otherwise it causes a big delay
+  // if the server is still alive after processing all the requests
   struct timeval timeout;
   timeout.tv_sec = 0;
   timeout.tv_usec = socket_timeout_usecs;
@@ -1199,91 +1313,110 @@ int send_over_network()
   serv_addr.sin_port = htons(net_port);
   serv_addr.sin_addr.s_addr = inet_addr(net_ip);
 
-  //This piece of code is only used for targets that send responses to a specific port number
-  //The Kamailio SIP server is an example. After running this code, the intialized sockfd 
-  //will be bound to the given local port
-  if(local_port > 0) {
+  // This piece of code is only used for targets that send responses to a specific port number
+  // The Kamailio SIP server is an example. After running this code, the intialized sockfd
+  // will be bound to the given local port
+  if (local_port > 0)
+  {
     local_serv_addr.sin_family = AF_INET;
     local_serv_addr.sin_addr.s_addr = INADDR_ANY;
     local_serv_addr.sin_port = htons(local_port);
 
     local_serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    if (bind(sockfd, (struct sockaddr*) &local_serv_addr, sizeof(struct sockaddr_in)))  {
+    if (bind(sockfd, (struct sockaddr *)&local_serv_addr, sizeof(struct sockaddr_in)))
+    {
       FATAL("Unable to bind socket on local source port");
     }
   }
 
-  if(connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-    //If it cannot connect to the server under test
-    //try it again as the server initial startup time is varied
-    for (n=0; n < 1000; n++) {
-      if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == 0) break;
+  if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+  {
+    // If it cannot connect to the server under test
+    // try it again as the server initial startup time is varied
+    for (n = 0; n < 1000; n++)
+    {
+      if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == 0)
+        break;
       usleep(1000);
     }
-    if (n== 1000) {
+    if (n == 1000)
+    {
       close(sockfd);
       return 1;
     }
   }
 
-  //retrieve early server response if needed
-  if (net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size)) goto HANDLE_RESPONSES;
+  // retrieve early server response if needed
+  if (net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size))
+    goto HANDLE_RESPONSES;
 
-  //write the request messages
-  kliter_t(lms) *it;
+  // write the request messages
+  kliter_t(lms) * it;
   messages_sent = 0;
 
-  for (it = kl_begin(kl_messages); it != kl_end(kl_messages); it = kl_next(it)) {
+  for (it = kl_begin(kl_messages); it != kl_end(kl_messages); it = kl_next(it))
+  {
     n = net_send(sockfd, timeout, kl_val(it)->mdata, kl_val(it)->msize);
     messages_sent++;
 
-    //Allocate memory to store new accumulated response buffer size
-    response_bytes = (u32 *) ck_realloc(response_bytes, messages_sent * sizeof(u32));
+    // Allocate memory to store new accumulated response buffer size
+    response_bytes = (u32 *)ck_realloc(response_bytes, messages_sent * sizeof(u32));
 
-    //Jump out if something wrong leading to incomplete message sent
-    if (n != kl_val(it)->msize) {
+    // Jump out if something wrong leading to incomplete message sent
+    if (n != kl_val(it)->msize)
+    {
       goto HANDLE_RESPONSES;
     }
 
-    //retrieve server response
+    // retrieve server response
     u32 prev_buf_size = response_buf_size;
-    if (net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size)) {
+    if (net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size))
+    {
       goto HANDLE_RESPONSES;
     }
 
-    //Update accumulated response buffer size
+    // Update accumulated response buffer size
     response_bytes[messages_sent - 1] = response_buf_size;
 
-    //set likely_buggy flag if AFLNet does not receive any feedback from the server
-    //it could be a signal of a potentiall server crash, like the case of CVE-2019-7314
-    if (prev_buf_size == response_buf_size) likely_buggy = 1;
-    else likely_buggy = 0;
+    // set likely_buggy flag if AFLNet does not receive any feedback from the server
+    // it could be a signal of a potentiall server crash, like the case of CVE-2019-7314
+    if (prev_buf_size == response_buf_size)
+      likely_buggy = 1;
+    else
+      likely_buggy = 0;
   }
 
 HANDLE_RESPONSES:
 
   net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size);
 
-  if (messages_sent > 0 && response_bytes != NULL) {
+  if (messages_sent > 0 && response_bytes != NULL)
+  {
     response_bytes[messages_sent - 1] = response_buf_size;
   }
 
-  //wait a bit letting the server to complete its remaining task(s)
+  // wait a bit letting the server to complete its remaining task(s)
   memset(session_virgin_bits, 255, MAP_SIZE);
-  while(1) {
-    if (has_new_bits(session_virgin_bits) != 2) break;
+  while (1)
+  {
+    if (has_new_bits(session_virgin_bits) != 2)
+      break;
   }
 
   close(sockfd);
 
-  if (likely_buggy && false_negative_reduction) return 0;
+  if (likely_buggy && false_negative_reduction)
+    return 0;
 
-  if (terminate_child && (child_pid > 0)) kill(child_pid, SIGTERM);
+  if (terminate_child && (child_pid > 0))
+    kill(child_pid, SIGTERM);
 
-  //give the server a bit more time to gracefully terminate
-  while(1) {
+  // give the server a bit more time to gracefully terminate
+  while (1)
+  {
     int status = kill(child_pid, 0);
-    if ((status != 0) && (errno == ESRCH)) break;
+    if ((status != 0) && (errno == ESRCH))
+      break;
   }
 
   return 0;
@@ -1292,7 +1425,8 @@ HANDLE_RESPONSES:
 
 /* Get unix time in milliseconds */
 
-static u64 get_cur_time(void) {
+static u64 get_cur_time(void)
+{
 
   struct timeval tv;
   struct timezone tz;
@@ -1300,13 +1434,12 @@ static u64 get_cur_time(void) {
   gettimeofday(&tv, &tz);
 
   return (tv.tv_sec * 1000ULL) + (tv.tv_usec / 1000);
-
 }
-
 
 /* Get unix time in microseconds */
 
-static u64 get_cur_time_us(void) {
+static u64 get_cur_time_us(void)
+{
 
   struct timeval tv;
   struct timezone tz;
@@ -1314,16 +1447,16 @@ static u64 get_cur_time_us(void) {
   gettimeofday(&tv, &tz);
 
   return (tv.tv_sec * 1000000ULL) + tv.tv_usec;
-
 }
-
 
 /* Generate a random number (from 0 to limit - 1). This may
    have slight bias. */
 
-static inline u32 UR(u32 limit) {
+static inline u32 UR(u32 limit)
+{
 
-  if (unlikely(!rand_cnt--)) {
+  if (unlikely(!rand_cnt--))
+  {
 
     u32 seed[2];
 
@@ -1331,62 +1464,60 @@ static inline u32 UR(u32 limit) {
 
     srandom(seed[0]);
     rand_cnt = (RESEED_RNG / 2) + (seed[1] % RESEED_RNG);
-
   }
 
   return random() % limit;
-
 }
-
 
 /* Shuffle an array of pointers. Might be slightly biased. */
 
-static void shuffle_ptrs(void** ptrs, u32 cnt) {
+static void shuffle_ptrs(void **ptrs, u32 cnt)
+{
 
   u32 i;
 
-  for (i = 0; i < cnt - 2; i++) {
+  for (i = 0; i < cnt - 2; i++)
+  {
 
     u32 j = i + UR(cnt - i);
     void *s = ptrs[i];
     ptrs[i] = ptrs[j];
     ptrs[j] = s;
-
   }
-
 }
-
 
 #ifdef HAVE_AFFINITY
 
 /* Build a list of processes bound to specific cores. Returns -1 if nothing
    can be found. Assumes an upper bound of 4k CPUs. */
 
-static void bind_to_free_cpu(void) {
+static void bind_to_free_cpu(void)
+{
 
-  DIR* d;
-  struct dirent* de;
+  DIR *d;
+  struct dirent *de;
   cpu_set_t c;
 
-  u8 cpu_used[4096] = { 0 };
+  u8 cpu_used[4096] = {0};
   u32 i;
 
-  if (cpu_core_count < 2) return;
+  if (cpu_core_count < 2)
+    return;
 
-  if (getenv("AFL_NO_AFFINITY")) {
+  if (getenv("AFL_NO_AFFINITY"))
+  {
 
     WARNF("Not binding to a CPU core (AFL_NO_AFFINITY set).");
     return;
-
   }
 
   d = opendir("/proc");
 
-  if (!d) {
+  if (!d)
+  {
 
     WARNF("Unable to access /proc - can't scan for free CPU cores.");
     return;
-
   }
 
   ACTF("Checking CPU core loadout...");
@@ -1401,52 +1532,58 @@ static void bind_to_free_cpu(void) {
      fail for some exotic binding setups, but is likely good enough in almost
      all real-world use cases. */
 
-  while ((de = readdir(d))) {
+  while ((de = readdir(d)))
+  {
 
-    u8* fn;
-    FILE* f;
+    u8 *fn;
+    FILE *f;
     u8 tmp[MAX_LINE];
     u8 has_vmsize = 0;
 
-    if (!isdigit(de->d_name[0])) continue;
+    if (!isdigit(de->d_name[0]))
+      continue;
 
     fn = alloc_printf("/proc/%s/status", de->d_name);
 
-    if (!(f = fopen(fn, "r"))) {
+    if (!(f = fopen(fn, "r")))
+    {
       ck_free(fn);
       continue;
     }
 
-    while (fgets(tmp, MAX_LINE, f)) {
+    while (fgets(tmp, MAX_LINE, f))
+    {
 
       u32 hval;
 
       /* Processes without VmSize are probably kernel tasks. */
 
-      if (!strncmp(tmp, "VmSize:\t", 8)) has_vmsize = 1;
+      if (!strncmp(tmp, "VmSize:\t", 8))
+        has_vmsize = 1;
 
       if (!strncmp(tmp, "Cpus_allowed_list:\t", 19) &&
           !strchr(tmp, '-') && !strchr(tmp, ',') &&
           sscanf(tmp + 19, "%u", &hval) == 1 && hval < sizeof(cpu_used) &&
-          has_vmsize) {
+          has_vmsize)
+      {
 
         cpu_used[hval] = 1;
         break;
-
       }
-
     }
 
     ck_free(fn);
     fclose(f);
-
   }
 
   closedir(d);
 
-  for (i = 0; i < cpu_core_count; i++) if (!cpu_used[i]) break;
+  for (i = 0; i < cpu_core_count; i++)
+    if (!cpu_used[i])
+      break;
 
-  if (i == cpu_core_count) {
+  if (i == cpu_core_count)
+  {
 
     SAYF("\n" cLRD "[-] " cRST
          "Uh-oh, looks like all %u CPU cores on your system are allocated to\n"
@@ -1456,7 +1593,6 @@ static void bind_to_free_cpu(void) {
          cpu_core_count);
 
     FATAL("No more free CPU cores");
-
   }
 
   OKF("Found a free CPU core, binding to #%u.", i);
@@ -1468,7 +1604,6 @@ static void bind_to_free_cpu(void) {
 
   if (sched_setaffinity(0, sizeof(c), &c))
     PFATAL("sched_setaffinity failed");
-
 }
 
 #endif /* HAVE_AFFINITY */
@@ -1478,49 +1613,53 @@ static void bind_to_free_cpu(void) {
 /* Helper function to compare buffers; returns first and last differing offset. We
    use this to find reasonable locations for splicing two files. */
 
-static void locate_diffs(u8* ptr1, u8* ptr2, u32 len, s32* first, s32* last) {
+static void locate_diffs(u8 *ptr1, u8 *ptr2, u32 len, s32 *first, s32 *last)
+{
 
   s32 f_loc = -1;
   s32 l_loc = -1;
   u32 pos;
 
-  for (pos = 0; pos < len; pos++) {
+  for (pos = 0; pos < len; pos++)
+  {
 
-    if (*(ptr1++) != *(ptr2++)) {
+    if (*(ptr1++) != *(ptr2++))
+    {
 
-      if (f_loc == -1) f_loc = pos;
+      if (f_loc == -1)
+        f_loc = pos;
       l_loc = pos;
-
     }
-
   }
 
   *first = f_loc;
   *last = l_loc;
 
   return;
-
 }
 
 #endif /* !IGNORE_FINDS */
-
 
 /* Describe integer. Uses 12 cyclic static buffers for return values. The value
    returned should be five characters or less for all the integers we reasonably
    expect to see. */
 
-static u8* DI(u64 val) {
+static u8 *DI(u64 val)
+{
 
   static u8 tmp[12][16];
   static u8 cur;
 
   cur = (cur + 1) % 12;
 
-#define CHK_FORMAT(_divisor, _limit_mult, _fmt, _cast) do { \
-    if (val < (_divisor) * (_limit_mult)) { \
+#define CHK_FORMAT(_divisor, _limit_mult, _fmt, _cast)    \
+  do                                                      \
+  {                                                       \
+    if (val < (_divisor) * (_limit_mult))                 \
+    {                                                     \
       sprintf(tmp[cur], _fmt, ((_cast)val) / (_divisor)); \
-      return tmp[cur]; \
-    } \
+      return tmp[cur];                                    \
+    }                                                     \
   } while (0)
 
   /* 0-9999 */
@@ -1559,35 +1698,35 @@ static u8* DI(u64 val) {
   /* 100T+ */
   strcpy(tmp[cur], "infty");
   return tmp[cur];
-
 }
-
 
 /* Describe float. Similar to the above, except with a single
    static buffer. */
 
-static u8* DF(double val) {
+static u8 *DF(double val)
+{
 
   static u8 tmp[16];
 
-  if (val < 99.995) {
+  if (val < 99.995)
+  {
     sprintf(tmp, "%0.02f", val);
     return tmp;
   }
 
-  if (val < 999.95) {
+  if (val < 999.95)
+  {
     sprintf(tmp, "%0.01f", val);
     return tmp;
   }
 
   return DI((u64)val);
-
 }
-
 
 /* Describe integer as memory size. */
 
-static u8* DMS(u64 val) {
+static u8 *DMS(u64 val)
+{
 
   static u8 tmp[12][16];
   static u8 cur;
@@ -1632,19 +1771,19 @@ static u8* DMS(u64 val) {
   /* 100T+ */
   strcpy(tmp[cur], "infty");
   return tmp[cur];
-
 }
-
 
 /* Describe time delta. Returns one static buffer, 34 chars of less. */
 
-static u8* DTD(u64 cur_ms, u64 event_ms) {
+static u8 *DTD(u64 cur_ms, u64 event_ms)
+{
 
   static u8 tmp[64];
   u64 delta;
   s32 t_d, t_h, t_m, t_s;
 
-  if (!event_ms) return "none seen yet";
+  if (!event_ms)
+    return "none seen yet";
 
   delta = cur_ms - event_ms;
 
@@ -1655,149 +1794,158 @@ static u8* DTD(u64 cur_ms, u64 event_ms) {
 
   sprintf(tmp, "%s days, %u hrs, %u min, %u sec", DI(t_d), t_h, t_m, t_s);
   return tmp;
-
 }
-
 
 /* Mark deterministic checks as done for a particular queue entry. We use the
    .state file to avoid repeating deterministic fuzzing when resuming aborted
    scans. */
 
-static void mark_as_det_done(struct queue_entry* q) {
+static void mark_as_det_done(struct queue_entry *q)
+{
 
-  u8* fn = strrchr(q->fname, '/');
+  u8 *fn = strrchr(q->fname, '/');
   s32 fd;
 
   fn = alloc_printf("%s/queue/.state/deterministic_done/%s", out_dir, fn + 1);
 
   fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-  if (fd < 0) PFATAL("Unable to create '%s'", fn);
+  if (fd < 0)
+    PFATAL("Unable to create '%s'", fn);
   close(fd);
 
   ck_free(fn);
 
   q->passed_det = 1;
-
 }
-
 
 /* Mark as variable. Create symlinks if possible to make it easier to examine
    the files. */
 
-static void mark_as_variable(struct queue_entry* q) {
+static void mark_as_variable(struct queue_entry *q)
+{
 
   u8 *fn = strrchr(q->fname, '/') + 1, *ldest;
 
   ldest = alloc_printf("../../%s", fn);
   fn = alloc_printf("%s/queue/.state/variable_behavior/%s", out_dir, fn);
 
-  if (symlink(ldest, fn)) {
+  if (symlink(ldest, fn))
+  {
 
     s32 fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (fd < 0) PFATAL("Unable to create '%s'", fn);
+    if (fd < 0)
+      PFATAL("Unable to create '%s'", fn);
     close(fd);
-
   }
 
   ck_free(ldest);
   ck_free(fn);
 
   q->var_behavior = 1;
-
 }
-
 
 /* Mark / unmark as redundant (edge-only). This is not used for restoring state,
    but may be useful for post-processing datasets. */
 
-static void mark_as_redundant(struct queue_entry* q, u8 state) {
+static void mark_as_redundant(struct queue_entry *q, u8 state)
+{
 
-  u8* fn;
+  u8 *fn;
   s32 fd;
 
-  if (state == q->fs_redundant) return;
+  if (state == q->fs_redundant)
+    return;
 
   q->fs_redundant = state;
 
   fn = strrchr(q->fname, '/');
   fn = alloc_printf("%s/queue/.state/redundant_edges/%s", out_dir, fn + 1);
 
-  if (state) {
+  if (state)
+  {
 
     fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (fd < 0) PFATAL("Unable to create '%s'", fn);
+    if (fd < 0)
+      PFATAL("Unable to create '%s'", fn);
     close(fd);
+  }
+  else
+  {
 
-  } else {
-
-    if (unlink(fn)) PFATAL("Unable to remove '%s'", fn);
-
+    if (unlink(fn))
+      PFATAL("Unable to remove '%s'", fn);
   }
 
   ck_free(fn);
-
 }
-
 
 /* Append new test case to the queue. */
 
-static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
+static void add_to_queue(u8 *fname, u32 len, u8 passed_det)
+{
 
-  struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
+  struct queue_entry *q = ck_alloc(sizeof(struct queue_entry));
 
-  q->fname        = fname;
-  q->len          = len;
-  q->depth        = cur_depth + 1;
-  q->passed_det   = passed_det;
-  q->regions      = NULL;
+  q->fname = fname;
+  q->len = len;
+  q->depth = cur_depth + 1;
+  q->passed_det = passed_det;
+  q->regions = NULL;
   q->region_count = 0;
-  q->index        = queued_paths;
+  q->index = queued_paths;
   q->generating_state_id = target_state_id;
   q->is_initial_seed = 0;
 
-  if (q->depth > max_depth) max_depth = q->depth;
+  if (q->depth > max_depth)
+    max_depth = q->depth;
 
-  if (queue_top) {
+  if (queue_top)
+  {
 
     queue_top->next = q;
     queue_top = q;
-
-  } else q_prev100 = queue = queue_top = q;
+  }
+  else
+    q_prev100 = queue = queue_top = q;
 
   queued_paths++;
   pending_not_fuzzed++;
 
   cycles_wo_finds = 0;
 
-  if (!(queued_paths % 100)) {
+  if (!(queued_paths % 100))
+  {
 
     q_prev100->next_100 = q;
     q_prev100 = q;
-
   }
 
   /* AFLNet: extract regions keeping client requests if needed */
-  if (corpus_read_or_sync) {
+  if (corpus_read_or_sync)
+  {
     FILE *fp;
     unsigned char *buf;
 
     /* opening file for reading */
-    fp = fopen(fname , "rb");
+    fp = fopen(fname, "rb");
 
     buf = (unsigned char *)ck_alloc(len);
     u32 byte_count = fread(buf, 1, len, fp);
     fclose(fp);
 
-    if (byte_count != len) PFATAL("AFLNet - Inconsistent file length '%s'", fname);
+    if (byte_count != len)
+      PFATAL("AFLNet - Inconsistent file length '%s'", fname);
     q->regions = (*extract_requests)(buf, len, &q->region_count);
     ck_free(buf);
 
-    //Keep track the maximal number of seed regions
-    //We use this for some optimization to reduce the overhead while following the server's sequence diagram
-    if ((corpus_read_or_sync == 1) && (q->region_count > max_seed_region_count)) max_seed_region_count = q->region_count;
-
-  } else {
-    //Convert the linked list kl_messages to regions
+    // Keep track the maximal number of seed regions
+    // We use this for some optimization to reduce the overhead while following the server's sequence diagram
+    if ((corpus_read_or_sync == 1) && (q->region_count > max_seed_region_count))
+      max_seed_region_count = q->region_count;
+  }
+  else
+  {
+    // Convert the linked list kl_messages to regions
     q->regions = convert_kl_messages_to_regions(kl_messages, &q->region_count, messages_sent);
   }
 
@@ -1808,80 +1956,85 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   last_path_time = get_cur_time();
 
-  //Add a new column to the was_fuzzed map
-  if (fuzzed_map_states) {
+  // Add a new column to the was_fuzzed map
+  if (fuzzed_map_states)
+  {
     expand_was_fuzzed_map(0, 1);
-  } else {
-    //Also add a new row (for state 0) if needed
+  }
+  else
+  {
+    // Also add a new row (for state 0) if needed
     expand_was_fuzzed_map(1, 1);
   }
 }
 
-
 /* Destroy the entire queue. */
 
-EXP_ST void destroy_queue(void) {
+EXP_ST void destroy_queue(void)
+{
 
   struct queue_entry *q = queue, *n;
 
-  while (q) {
+  while (q)
+  {
 
     n = q->next;
     ck_free(q->fname);
     ck_free(q->trace_mini);
     u32 i;
-    //Free AFLNet-specific data structure
-    for (i = 0; i < q->region_count; i++) {
-      if (q->regions[i].state_sequence) ck_free(q->regions[i].state_sequence);
+    // Free AFLNet-specific data structure
+    for (i = 0; i < q->region_count; i++)
+    {
+      if (q->regions[i].state_sequence)
+        ck_free(q->regions[i].state_sequence);
     }
-    if (q->regions) ck_free(q->regions);
+    if (q->regions)
+      ck_free(q->regions);
     ck_free(q);
     q = n;
-
   }
-
 }
-
 
 /* Write bitmap to file. The bitmap is useful mostly for the secret
    -B option, to focus a separate fuzzing session on a particular
    interesting input without rediscovering all the others. */
 
-EXP_ST void write_bitmap(void) {
+EXP_ST void write_bitmap(void)
+{
 
-  u8* fname;
+  u8 *fname;
   s32 fd;
 
-  if (!bitmap_changed) return;
+  if (!bitmap_changed)
+    return;
   bitmap_changed = 0;
 
   fname = alloc_printf("%s/fuzz_bitmap", out_dir);
   fd = open(fname, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 
-  if (fd < 0) PFATAL("Unable to open '%s'", fname);
+  if (fd < 0)
+    PFATAL("Unable to open '%s'", fname);
 
   ck_write(fd, virgin_bits, MAP_SIZE, fname);
 
   close(fd);
   ck_free(fname);
-
 }
-
 
 /* Read bitmap from file. This is for the -B option again. */
 
-EXP_ST void read_bitmap(u8* fname) {
+EXP_ST void read_bitmap(u8 *fname)
+{
 
   s32 fd = open(fname, O_RDONLY);
 
-  if (fd < 0) PFATAL("Unable to open '%s'", fname);
+  if (fd < 0)
+    PFATAL("Unable to open '%s'", fname);
 
   ck_read(fd, virgin_bits, MAP_SIZE, fname);
 
   close(fd);
-
 }
-
 
 /* Check if the current execution path brings anything new to the table.
    Update virgin bits to reflect the finds. Returns 1 if the only change is
@@ -1891,38 +2044,42 @@ EXP_ST void read_bitmap(u8* fname) {
    This function is called after every exec() on a fairly large buffer, so
    it needs to be fast. We do this in 32-bit and 64-bit flavors. */
 
-static inline u8 has_new_bits(u8* virgin_map) {
+static inline u8 has_new_bits(u8 *virgin_map)
+{
 
 #ifdef WORD_SIZE_64
 
-  u64* current = (u64*)trace_bits;
-  u64* virgin  = (u64*)virgin_map;
+  u64 *current = (u64 *)trace_bits;
+  u64 *virgin = (u64 *)virgin_map;
 
-  u32  i = (MAP_SIZE >> 3);
+  u32 i = (MAP_SIZE >> 3);
 
 #else
 
-  u32* current = (u32*)trace_bits;
-  u32* virgin  = (u32*)virgin_map;
+  u32 *current = (u32 *)trace_bits;
+  u32 *virgin = (u32 *)virgin_map;
 
-  u32  i = (MAP_SIZE >> 2);
+  u32 i = (MAP_SIZE >> 2);
 
 #endif /* ^WORD_SIZE_64 */
 
-  u8   ret = 0;
+  u8 ret = 0;
 
-  while (i--) {
+  while (i--)
+  {
 
     /* Optimize for (*current & *virgin) == 0 - i.e., no bits in current bitmap
        that have not been already cleared from the virgin map - since this will
        almost always be the case. */
 
-    if (unlikely(*current) && unlikely(*current & *virgin)) {
+    if (unlikely(*current) && unlikely(*current & *virgin))
+    {
 
-      if (likely(ret < 2)) {
+      if (likely(ret < 2))
+      {
 
-        u8* cur = (u8*)current;
-        u8* vir = (u8*)virgin;
+        u8 *cur = (u8 *)current;
+        u8 *vir = (u8 *)virgin;
 
         /* Looks like we have not found any new bytes yet; see if any non-zero
            bytes in current[] are pristine in virgin[]. */
@@ -1932,52 +2089,55 @@ static inline u8 has_new_bits(u8* virgin_map) {
         if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
             (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff) ||
             (cur[4] && vir[4] == 0xff) || (cur[5] && vir[5] == 0xff) ||
-            (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff)) ret = 2;
-        else ret = 1;
+            (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff))
+          ret = 2;
+        else
+          ret = 1;
 
 #else
 
         if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
-            (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff)) ret = 2;
-        else ret = 1;
+            (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff))
+          ret = 2;
+        else
+          ret = 1;
 
 #endif /* ^WORD_SIZE_64 */
-
       }
 
       *virgin &= ~*current;
-
     }
 
     current++;
     virgin++;
-
   }
 
-  if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
+  if (ret && virgin_map == virgin_bits)
+    bitmap_changed = 1;
 
   return ret;
-
 }
-
 
 /* Count the number of bits set in the provided bitmap. Used for the status
    screen several times every second, does not have to be fast. */
 
-static u32 count_bits(u8* mem) {
+static u32 count_bits(u8 *mem)
+{
 
-  u32* ptr = (u32*)mem;
-  u32  i   = (MAP_SIZE >> 2);
-  u32  ret = 0;
+  u32 *ptr = (u32 *)mem;
+  u32 i = (MAP_SIZE >> 2);
+  u32 ret = 0;
 
-  while (i--) {
+  while (i--)
+  {
 
     u32 v = *(ptr++);
 
     /* This gets called on the inverse, virgin bitmap; optimize for sparse
        data. */
 
-    if (v == 0xffffffff) {
+    if (v == 0xffffffff)
+    {
       ret += 32;
       continue;
     }
@@ -1985,71 +2145,76 @@ static u32 count_bits(u8* mem) {
     v -= ((v >> 1) & 0x55555555);
     v = (v & 0x33333333) + ((v >> 2) & 0x33333333);
     ret += (((v + (v >> 4)) & 0xF0F0F0F) * 0x01010101) >> 24;
-
   }
 
   return ret;
-
 }
 
-
-#define FF(_b)  (0xff << ((_b) << 3))
+#define FF(_b) (0xff << ((_b) << 3))
 
 /* Count the number of bytes set in the bitmap. Called fairly sporadically,
    mostly to update the status screen or calibrate and examine confirmed
    new paths. */
 
-static u32 count_bytes(u8* mem) {
+static u32 count_bytes(u8 *mem)
+{
 
-  u32* ptr = (u32*)mem;
-  u32  i   = (MAP_SIZE >> 2);
-  u32  ret = 0;
+  u32 *ptr = (u32 *)mem;
+  u32 i = (MAP_SIZE >> 2);
+  u32 ret = 0;
 
-  while (i--) {
+  while (i--)
+  {
 
     u32 v = *(ptr++);
 
-    if (!v) continue;
-    if (v & FF(0)) ret++;
-    if (v & FF(1)) ret++;
-    if (v & FF(2)) ret++;
-    if (v & FF(3)) ret++;
-
+    if (!v)
+      continue;
+    if (v & FF(0))
+      ret++;
+    if (v & FF(1))
+      ret++;
+    if (v & FF(2))
+      ret++;
+    if (v & FF(3))
+      ret++;
   }
 
   return ret;
-
 }
-
 
 /* Count the number of non-255 bytes set in the bitmap. Used strictly for the
    status screen, several calls per second or so. */
 
-static u32 count_non_255_bytes(u8* mem) {
+static u32 count_non_255_bytes(u8 *mem)
+{
 
-  u32* ptr = (u32*)mem;
-  u32  i   = (MAP_SIZE >> 2);
-  u32  ret = 0;
+  u32 *ptr = (u32 *)mem;
+  u32 i = (MAP_SIZE >> 2);
+  u32 ret = 0;
 
-  while (i--) {
+  while (i--)
+  {
 
     u32 v = *(ptr++);
 
     /* This is called on the virgin bitmap, so optimize for the most likely
        case. */
 
-    if (v == 0xffffffff) continue;
-    if ((v & FF(0)) != FF(0)) ret++;
-    if ((v & FF(1)) != FF(1)) ret++;
-    if ((v & FF(2)) != FF(2)) ret++;
-    if ((v & FF(3)) != FF(3)) ret++;
-
+    if (v == 0xffffffff)
+      continue;
+    if ((v & FF(0)) != FF(0))
+      ret++;
+    if ((v & FF(1)) != FF(1))
+      ret++;
+    if ((v & FF(2)) != FF(2))
+      ret++;
+    if ((v & FF(3)) != FF(3))
+      ret++;
   }
 
   return ret;
-
 }
-
 
 /* Destructively simplify trace by eliminating hit count information
    and replacing it with 0x80 or 0x01 depending on whether the tuple
@@ -2058,24 +2223,27 @@ static u32 count_non_255_bytes(u8* mem) {
 
 static const u8 simplify_lookup[256] = {
 
-  [0]         = 1,
-  [1 ... 255] = 128
+    [0] = 1,
+    [1 ... 255] = 128
 
 };
 
 #ifdef WORD_SIZE_64
 
-static void simplify_trace(u64* mem) {
+static void simplify_trace(u64 *mem)
+{
 
   u32 i = MAP_SIZE >> 3;
 
-  while (i--) {
+  while (i--)
+  {
 
     /* Optimize for sparse bitmaps. */
 
-    if (unlikely(*mem)) {
+    if (unlikely(*mem))
+    {
 
-      u8* mem8 = (u8*)mem;
+      u8 *mem8 = (u8 *)mem;
 
       mem8[0] = simplify_lookup[mem8[0]];
       mem8[1] = simplify_lookup[mem8[1]];
@@ -2085,43 +2253,44 @@ static void simplify_trace(u64* mem) {
       mem8[5] = simplify_lookup[mem8[5]];
       mem8[6] = simplify_lookup[mem8[6]];
       mem8[7] = simplify_lookup[mem8[7]];
-
-    } else *mem = 0x0101010101010101ULL;
+    }
+    else
+      *mem = 0x0101010101010101ULL;
 
     mem++;
-
   }
-
 }
 
 #else
 
-static void simplify_trace(u32* mem) {
+static void simplify_trace(u32 *mem)
+{
 
   u32 i = MAP_SIZE >> 2;
 
-  while (i--) {
+  while (i--)
+  {
 
     /* Optimize for sparse bitmaps. */
 
-    if (unlikely(*mem)) {
+    if (unlikely(*mem))
+    {
 
-      u8* mem8 = (u8*)mem;
+      u8 *mem8 = (u8 *)mem;
 
       mem8[0] = simplify_lookup[mem8[0]];
       mem8[1] = simplify_lookup[mem8[1]];
       mem8[2] = simplify_lookup[mem8[2]];
       mem8[3] = simplify_lookup[mem8[3]];
-
-    } else *mem = 0x01010101;
+    }
+    else
+      *mem = 0x01010101;
 
     mem++;
   }
-
 }
 
 #endif /* ^WORD_SIZE_64 */
-
 
 /* Destructively classify execution counts in a trace. This is used as a
    preprocessing step for any newly acquired traces. Called on every exec,
@@ -2129,115 +2298,111 @@ static void simplify_trace(u32* mem) {
 
 static const u8 count_class_lookup8[256] = {
 
-  [0]           = 0,
-  [1]           = 1,
-  [2]           = 2,
-  [3]           = 4,
-  [4 ... 7]     = 8,
-  [8 ... 15]    = 16,
-  [16 ... 31]   = 32,
-  [32 ... 127]  = 64,
-  [128 ... 255] = 128
+    [0] = 0,
+    [1] = 1,
+    [2] = 2,
+    [3] = 4,
+    [4 ... 7] = 8,
+    [8 ... 15] = 16,
+    [16 ... 31] = 32,
+    [32 ... 127] = 64,
+    [128 ... 255] = 128
 
 };
 
 static u16 count_class_lookup16[65536];
 
-
-EXP_ST void init_count_class16(void) {
+EXP_ST void init_count_class16(void)
+{
 
   u32 b1, b2;
 
   for (b1 = 0; b1 < 256; b1++)
     for (b2 = 0; b2 < 256; b2++)
       count_class_lookup16[(b1 << 8) + b2] =
-        (count_class_lookup8[b1] << 8) |
-        count_class_lookup8[b2];
-
+          (count_class_lookup8[b1] << 8) |
+          count_class_lookup8[b2];
 }
-
 
 #ifdef WORD_SIZE_64
 
-static inline void classify_counts(u64* mem) {
+static inline void classify_counts(u64 *mem)
+{
 
   u32 i = MAP_SIZE >> 3;
 
-  while (i--) {
+  while (i--)
+  {
 
     /* Optimize for sparse bitmaps. */
 
-    if (unlikely(*mem)) {
+    if (unlikely(*mem))
+    {
 
-      u16* mem16 = (u16*)mem;
+      u16 *mem16 = (u16 *)mem;
 
       mem16[0] = count_class_lookup16[mem16[0]];
       mem16[1] = count_class_lookup16[mem16[1]];
       mem16[2] = count_class_lookup16[mem16[2]];
       mem16[3] = count_class_lookup16[mem16[3]];
-
     }
 
     mem++;
-
   }
-
 }
 
 #else
 
-static inline void classify_counts(u32* mem) {
+static inline void classify_counts(u32 *mem)
+{
 
   u32 i = MAP_SIZE >> 2;
 
-  while (i--) {
+  while (i--)
+  {
 
     /* Optimize for sparse bitmaps. */
 
-    if (unlikely(*mem)) {
+    if (unlikely(*mem))
+    {
 
-      u16* mem16 = (u16*)mem;
+      u16 *mem16 = (u16 *)mem;
 
       mem16[0] = count_class_lookup16[mem16[0]];
       mem16[1] = count_class_lookup16[mem16[1]];
-
     }
 
     mem++;
-
   }
-
 }
 
 #endif /* ^WORD_SIZE_64 */
 
-
 /* Get rid of shared memory (atexit handler). */
 
-static void remove_shm(void) {
+static void remove_shm(void)
+{
 
   shmctl(shm_id, IPC_RMID, NULL);
-
 }
-
 
 /* Compact trace bytes into a smaller bitmap. We effectively just drop the
    count information here. This is called only sporadically, for some
    new paths. */
 
-static void minimize_bits(u8* dst, u8* src) {
+static void minimize_bits(u8 *dst, u8 *src)
+{
 
   u32 i = 0;
 
-  while (i < MAP_SIZE) {
+  while (i < MAP_SIZE)
+  {
 
-    if (*(src++)) dst[i >> 3] |= 1 << (i & 7);
+    if (*(src++))
+      dst[i >> 3] |= 1 << (i & 7);
     i++;
-
   }
-
 }
-
 
 /* When we bump into a new path, we call this to see if the path appears
    more "favorable" than any of the existing ones. The purpose of the
@@ -2250,7 +2415,8 @@ static void minimize_bits(u8* dst, u8* src) {
    contender, or if the contender has smaller unique state count or
    it has a more favorable speed x size factor. */
 
-static void update_bitmap_score(struct queue_entry* q) {
+static void update_bitmap_score(struct queue_entry *q)
+{
 
   u32 i;
   u64 fav_factor = q->exec_us * q->len;
@@ -2260,40 +2426,41 @@ static void update_bitmap_score(struct queue_entry* q) {
 
   for (i = 0; i < MAP_SIZE; i++)
 
-    if (trace_bits[i]) {
+    if (trace_bits[i])
+    {
 
-       if (top_rated[i]) {
+      if (top_rated[i])
+      {
 
-         /* Faster-executing or smaller test cases are favored. */
+        /* Faster-executing or smaller test cases are favored. */
 
-         if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len) continue;
+        if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len)
+          continue;
 
-         /* Looks like we're going to win. Decrease ref count for the
-            previous winner, discard its trace_bits[] if necessary. */
+        /* Looks like we're going to win. Decrease ref count for the
+           previous winner, discard its trace_bits[] if necessary. */
 
-         if (!--top_rated[i]->tc_ref) {
-           ck_free(top_rated[i]->trace_mini);
-           top_rated[i]->trace_mini = 0;
-         }
+        if (!--top_rated[i]->tc_ref)
+        {
+          ck_free(top_rated[i]->trace_mini);
+          top_rated[i]->trace_mini = 0;
+        }
+      }
 
-       }
+      /* Insert ourselves as the new winner. */
 
-       /* Insert ourselves as the new winner. */
+      top_rated[i] = q;
+      q->tc_ref++;
 
-       top_rated[i] = q;
-       q->tc_ref++;
+      if (!q->trace_mini)
+      {
+        q->trace_mini = ck_alloc(MAP_SIZE >> 3);
+        minimize_bits(q->trace_mini, trace_bits);
+      }
 
-       if (!q->trace_mini) {
-         q->trace_mini = ck_alloc(MAP_SIZE >> 3);
-         minimize_bits(q->trace_mini, trace_bits);
-       }
-
-       score_changed = 1;
-
-     }
-
+      score_changed = 1;
+    }
 }
-
 
 /* The second part of the mechanism discussed above is a routine that
    goes over top_rated[] entries, and then sequentially grabs winners for
@@ -2301,24 +2468,27 @@ static void update_bitmap_score(struct queue_entry* q) {
    until the next run. The favored entries are given more air time during
    all fuzzing steps. */
 
-static void cull_queue(void) {
+static void cull_queue(void)
+{
 
-  struct queue_entry* q;
+  struct queue_entry *q;
   static u8 temp_v[MAP_SIZE >> 3];
   u32 i;
 
-  if (dumb_mode || !score_changed) return;
+  if (dumb_mode || !score_changed)
+    return;
 
   score_changed = 0;
 
   memset(temp_v, 255, MAP_SIZE >> 3);
 
-  queued_favored  = 0;
+  queued_favored = 0;
   pending_favored = 0;
 
   q = queue;
 
-  while (q) {
+  while (q)
+  {
     if (!q->is_initial_seed)
       q->favored = 0;
     q = q->next;
@@ -2328,7 +2498,8 @@ static void cull_queue(void) {
      If yes, and if it has a top_rated[] contender, let's use it. */
 
   for (i = 0; i < MAP_SIZE; i++)
-    if (top_rated[i] && (temp_v[i >> 3] & (1 << (i & 7)))) {
+    if (top_rated[i] && (temp_v[i >> 3] & (1 << (i & 7))))
+    {
 
       u32 j = MAP_SIZE >> 3;
 
@@ -2341,41 +2512,46 @@ static void cull_queue(void) {
       top_rated[i]->favored = 1;
       queued_favored++;
 
-      //if (!top_rated[i]->was_fuzzed) pending_favored++;
+      // if (!top_rated[i]->was_fuzzed) pending_favored++;
       /* AFLNet takes into account more information to make this decision */
-      if (state_aware_mode && !code_aware_schedule){
-        if ((top_rated[i]->generating_state_id == target_state_id || top_rated[i]->is_initial_seed) && (was_fuzzed_map[get_state_index(target_state_id)][top_rated[i]->index] == 0)) pending_favored++;
+      if (state_aware_mode && !code_aware_schedule)
+      {
+        if ((top_rated[i]->generating_state_id == target_state_id || top_rated[i]->is_initial_seed) && (was_fuzzed_map[get_state_index(target_state_id)][top_rated[i]->index] == 0))
+          pending_favored++;
       }
-      else{
-        if (!top_rated[i]->was_fuzzed) pending_favored++;
+      else
+      {
+        if (!top_rated[i]->was_fuzzed)
+          pending_favored++;
       }
-
     }
 
   q = queue;
 
-  while (q) {
+  while (q)
+  {
     mark_as_redundant(q, !q->favored);
     q = q->next;
   }
-
 }
-
 
 /* Configure shared memory and virgin_bits. This is called at startup. */
 
-EXP_ST void setup_shm(void) {
+EXP_ST void setup_shm(void)
+{
 
-  u8* shm_str;
+  u8 *shm_str;
 
-  if (!in_bitmap) memset(virgin_bits, 255, MAP_SIZE);
+  if (!in_bitmap)
+    memset(virgin_bits, 255, MAP_SIZE);
 
   memset(virgin_tmout, 255, MAP_SIZE);
   memset(virgin_crash, 255, MAP_SIZE);
 
   shm_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
 
-  if (shm_id < 0) PFATAL("shmget() failed");
+  if (shm_id < 0)
+    PFATAL("shmget() failed");
 
   atexit(remove_shm);
 
@@ -2386,53 +2562,56 @@ EXP_ST void setup_shm(void) {
      fork server commands. This should be replaced with better auto-detection
      later on, perhaps? */
 
-  if (!dumb_mode && feedback_type != STATE_FEEDBACK) setenv(SHM_ENV_VAR, shm_str, 1);
+  if (!dumb_mode && feedback_type != STATE_FEEDBACK)
+    setenv(SHM_ENV_VAR, shm_str, 1);
 
   ck_free(shm_str);
 
   trace_bits = shmat(shm_id, NULL, 0);
 
-  if (!trace_bits) PFATAL("shmat() failed");
-
+  if (!trace_bits)
+    PFATAL("shmat() failed");
 }
-
 
 /* Load postprocessor, if available. */
 
-static void setup_post(void) {
+static void setup_post(void)
+{
 
-  void* dh;
-  u8* fn = getenv("AFL_POST_LIBRARY");
+  void *dh;
+  u8 *fn = getenv("AFL_POST_LIBRARY");
   u32 tlen = 6;
 
-  if (!fn) return;
+  if (!fn)
+    return;
 
   ACTF("Loading postprocessor from '%s'...", fn);
 
   dh = dlopen(fn, RTLD_NOW);
-  if (!dh) FATAL("%s", dlerror());
+  if (!dh)
+    FATAL("%s", dlerror());
 
   post_handler = dlsym(dh, "afl_postprocess");
-  if (!post_handler) FATAL("Symbol 'afl_postprocess' not found.");
+  if (!post_handler)
+    FATAL("Symbol 'afl_postprocess' not found.");
 
   /* Do a quick test. It's better to segfault now than later =) */
 
   post_handler("hello", &tlen);
 
   OKF("Postprocessor installed successfully.");
-
 }
-
 
 /* Read all testcases from the input directory, then queue them for testing.
    Called at startup. */
 
-static void read_testcases(void) {
+static void read_testcases(void)
+{
 
   struct dirent **nl;
   s32 nl_cnt;
   u32 i;
-  u8* fn;
+  u8 *fn;
 
   /* AFLNet: set this flag to enable request extractions while adding new seed to the queue */
   corpus_read_or_sync = 1;
@@ -2440,7 +2619,10 @@ static void read_testcases(void) {
   /* Auto-detect non-in-place resumption attempts. */
 
   fn = alloc_printf("%s/queue", in_dir);
-  if (!access(fn, F_OK)) in_dir = fn; else ck_free(fn);
+  if (!access(fn, F_OK))
+    in_dir = fn;
+  else
+    ck_free(fn);
 
   ACTF("Scanning '%s'...", in_dir);
 
@@ -2450,7 +2632,8 @@ static void read_testcases(void) {
 
   nl_cnt = scandir(in_dir, &nl, NULL, alphasort);
 
-  if (nl_cnt < 0) {
+  if (nl_cnt < 0)
+  {
 
     if (errno == ENOENT || errno == ENOTDIR)
 
@@ -2461,24 +2644,24 @@ static void read_testcases(void) {
            "    directory.\n");
 
     PFATAL("Unable to open '%s'", in_dir);
-
   }
 
-  if (shuffle_queue && nl_cnt > 1) {
+  if (shuffle_queue && nl_cnt > 1)
+  {
 
     ACTF("Shuffling queue...");
-    shuffle_ptrs((void**)nl, nl_cnt);
-
+    shuffle_ptrs((void **)nl, nl_cnt);
   }
 
-  for (i = 0; i < nl_cnt; i++) {
+  for (i = 0; i < nl_cnt; i++)
+  {
 
     struct stat st;
 
-    u8* fn = alloc_printf("%s/%s", in_dir, nl[i]->d_name);
-    u8* dfn = alloc_printf("%s/.state/deterministic_done/%s", in_dir, nl[i]->d_name);
+    u8 *fn = alloc_printf("%s/%s", in_dir, nl[i]->d_name);
+    u8 *dfn = alloc_printf("%s/.state/deterministic_done/%s", in_dir, nl[i]->d_name);
 
-    u8  passed_det = 0;
+    u8 passed_det = 0;
 
     free(nl[i]); /* not tracked */
 
@@ -2487,12 +2670,12 @@ static void read_testcases(void) {
 
     /* This also takes care of . and .. */
 
-    if (!S_ISREG(st.st_mode) || !st.st_size || strstr(fn, "/README.txt")) {
+    if (!S_ISREG(st.st_mode) || !st.st_size || strstr(fn, "/README.txt"))
+    {
 
       ck_free(fn);
       ck_free(dfn);
       continue;
-
     }
 
     if (st.st_size > MAX_FILE)
@@ -2504,11 +2687,11 @@ static void read_testcases(void) {
        fuzzing when resuming aborted scans, because it would be pointless
        and probably very time-consuming. */
 
-    if (!access(dfn, F_OK)) passed_det = 1;
+    if (!access(dfn, F_OK))
+      passed_det = 1;
     ck_free(dfn);
 
     add_to_queue(fn, st.st_size, passed_det);
-
   }
 
   /* AFLNet: unset this flag to disable request extractions while adding new seed to the queue */
@@ -2516,7 +2699,8 @@ static void read_testcases(void) {
 
   free(nl); /* not tracked */
 
-  if (!queued_paths) {
+  if (!queued_paths)
+  {
 
     SAYF("\n" cLRD "[-] " cRST
          "Looks like there are no valid test cases in the input directory! The fuzzer\n"
@@ -2525,47 +2709,48 @@ static void read_testcases(void) {
          "    input directory.\n");
 
     FATAL("No usable test cases in '%s'", in_dir);
-
   }
 
   last_path_time = 0;
   queued_at_start = queued_paths;
-
 }
-
 
 /* Helper function for load_extras. */
 
-static int compare_extras_len(const void* p1, const void* p2) {
-  struct extra_data *e1 = (struct extra_data*)p1,
-                    *e2 = (struct extra_data*)p2;
+static int compare_extras_len(const void *p1, const void *p2)
+{
+  struct extra_data *e1 = (struct extra_data *)p1,
+                    *e2 = (struct extra_data *)p2;
 
   return e1->len - e2->len;
 }
 
-static int compare_extras_use_d(const void* p1, const void* p2) {
-  struct extra_data *e1 = (struct extra_data*)p1,
-                    *e2 = (struct extra_data*)p2;
+static int compare_extras_use_d(const void *p1, const void *p2)
+{
+  struct extra_data *e1 = (struct extra_data *)p1,
+                    *e2 = (struct extra_data *)p2;
 
   return e2->hit_cnt - e1->hit_cnt;
 }
 
-
 /* Read extras from a file, sort by size. */
 
-static void load_extras_file(u8* fname, u32* min_len, u32* max_len,
-                             u32 dict_level) {
+static void load_extras_file(u8 *fname, u32 *min_len, u32 *max_len,
+                             u32 dict_level)
+{
 
-  FILE* f;
-  u8  buf[MAX_LINE];
-  u8  *lptr;
+  FILE *f;
+  u8 buf[MAX_LINE];
+  u8 *lptr;
   u32 cur_line = 0;
 
   f = fopen(fname, "r");
 
-  if (!f) PFATAL("Unable to open '%s'", fname);
+  if (!f)
+    PFATAL("Unable to open '%s'", fname);
 
-  while ((lptr = fgets(buf, MAX_LINE, f))) {
+  while ((lptr = fgets(buf, MAX_LINE, f)))
+  {
 
     u8 *rptr, *wptr;
     u32 klen = 0;
@@ -2574,16 +2759,19 @@ static void load_extras_file(u8* fname, u32* min_len, u32* max_len,
 
     /* Trim on left and right. */
 
-    while (isspace(*lptr)) lptr++;
+    while (isspace(*lptr))
+      lptr++;
 
     rptr = lptr + strlen(lptr) - 1;
-    while (rptr >= lptr && isspace(*rptr)) rptr--;
+    while (rptr >= lptr && isspace(*rptr))
+      rptr--;
     rptr++;
     *rptr = 0;
 
     /* Skip empty lines and comments. */
 
-    if (!*lptr || *lptr == '#') continue;
+    if (!*lptr || *lptr == '#')
+      continue;
 
     /* All other lines must end with '"', which we can consume. */
 
@@ -2596,21 +2784,25 @@ static void load_extras_file(u8* fname, u32* min_len, u32* max_len,
 
     /* Skip alphanumerics and dashes (label). */
 
-    while (isalnum(*lptr) || *lptr == '_') lptr++;
+    while (isalnum(*lptr) || *lptr == '_')
+      lptr++;
 
     /* If @number follows, parse that. */
 
-    if (*lptr == '@') {
+    if (*lptr == '@')
+    {
 
       lptr++;
-      if (atoi(lptr) > dict_level) continue;
-      while (isdigit(*lptr)) lptr++;
-
+      if (atoi(lptr) > dict_level)
+        continue;
+      while (isdigit(*lptr))
+        lptr++;
     }
 
     /* Skip whitespace and = signs. */
 
-    while (isspace(*lptr) || *lptr == '=') lptr++;
+    while (isspace(*lptr) || *lptr == '=')
+      lptr++;
 
     /* Consume opening '"'. */
 
@@ -2619,55 +2811,57 @@ static void load_extras_file(u8* fname, u32* min_len, u32* max_len,
 
     lptr++;
 
-    if (!*lptr) FATAL("Empty keyword in line %u.", cur_line);
+    if (!*lptr)
+      FATAL("Empty keyword in line %u.", cur_line);
 
     /* Okay, let's allocate memory and copy data between "...", handling
        \xNN escaping, \\, and \". */
 
     extras = ck_realloc_block(extras, (extras_cnt + 1) *
-               sizeof(struct extra_data));
+                                          sizeof(struct extra_data));
 
     wptr = extras[extras_cnt].data = ck_alloc(rptr - lptr);
 
-    while (*lptr) {
+    while (*lptr)
+    {
 
-      char* hexdigits = "0123456789abcdef";
+      char *hexdigits = "0123456789abcdef";
 
-      switch (*lptr) {
+      switch (*lptr)
+      {
 
-        case 1 ... 31:
-        case 128 ... 255:
-          FATAL("Non-printable characters in line %u.", cur_line);
+      case 1 ... 31:
+      case 128 ... 255:
+        FATAL("Non-printable characters in line %u.", cur_line);
 
-        case '\\':
+      case '\\':
 
-          lptr++;
+        lptr++;
 
-          if (*lptr == '\\' || *lptr == '"') {
-            *(wptr++) = *(lptr++);
-            klen++;
-            break;
-          }
+        if (*lptr == '\\' || *lptr == '"')
+        {
+          *(wptr++) = *(lptr++);
+          klen++;
+          break;
+        }
 
-          if (*lptr != 'x' || !isxdigit(lptr[1]) || !isxdigit(lptr[2]))
-            FATAL("Invalid escaping (not \\xNN) in line %u.", cur_line);
+        if (*lptr != 'x' || !isxdigit(lptr[1]) || !isxdigit(lptr[2]))
+          FATAL("Invalid escaping (not \\xNN) in line %u.", cur_line);
 
-          *(wptr++) =
+        *(wptr++) =
             ((strchr(hexdigits, tolower(lptr[1])) - hexdigits) << 4) |
             (strchr(hexdigits, tolower(lptr[2])) - hexdigits);
 
-          lptr += 3;
-          klen++;
+        lptr += 3;
+        klen++;
 
-          break;
+        break;
 
-        default:
+      default:
 
-          *(wptr++) = *(lptr++);
-          klen++;
-
+        *(wptr++) = *(lptr++);
+        klen++;
       }
-
     }
 
     extras[extras_cnt].len = klen;
@@ -2676,86 +2870,92 @@ static void load_extras_file(u8* fname, u32* min_len, u32* max_len,
       FATAL("Keyword too big in line %u (%s, limit is %s)", cur_line,
             DMS(klen), DMS(MAX_DICT_FILE));
 
-    if (*min_len > klen) *min_len = klen;
-    if (*max_len < klen) *max_len = klen;
+    if (*min_len > klen)
+      *min_len = klen;
+    if (*max_len < klen)
+      *max_len = klen;
 
     extras_cnt++;
-
   }
 
   fclose(f);
-
 }
-
 
 /* Read extras from the extras directory and sort them by size. */
 
-static void load_extras(u8* dir) {
+static void load_extras(u8 *dir)
+{
 
-  DIR* d;
-  struct dirent* de;
+  DIR *d;
+  struct dirent *de;
   u32 min_len = MAX_DICT_FILE, max_len = 0, dict_level = 0;
-  u8* x;
+  u8 *x;
 
   /* If the name ends with @, extract level and continue. */
 
-  if ((x = strchr(dir, '@'))) {
+  if ((x = strchr(dir, '@')))
+  {
 
     *x = 0;
     dict_level = atoi(x + 1);
-
   }
 
   ACTF("Loading extra dictionary from '%s' (level %u)...", dir, dict_level);
 
   d = opendir(dir);
 
-  if (!d) {
+  if (!d)
+  {
 
-    if (errno == ENOTDIR) {
+    if (errno == ENOTDIR)
+    {
       load_extras_file(dir, &min_len, &max_len, dict_level);
       goto check_and_sort;
     }
 
     PFATAL("Unable to open '%s'", dir);
-
   }
 
-  if (x) FATAL("Dictionary levels not supported for directories.");
+  if (x)
+    FATAL("Dictionary levels not supported for directories.");
 
-  while ((de = readdir(d))) {
+  while ((de = readdir(d)))
+  {
 
     struct stat st;
-    u8* fn = alloc_printf("%s/%s", dir, de->d_name);
+    u8 *fn = alloc_printf("%s/%s", dir, de->d_name);
     s32 fd;
 
     if (lstat(fn, &st) || access(fn, R_OK))
       PFATAL("Unable to access '%s'", fn);
 
     /* This also takes care of . and .. */
-    if (!S_ISREG(st.st_mode) || !st.st_size) {
+    if (!S_ISREG(st.st_mode) || !st.st_size)
+    {
 
       ck_free(fn);
       continue;
-
     }
 
     if (st.st_size > MAX_DICT_FILE)
       FATAL("Extra '%s' is too big (%s, limit is %s)", fn,
             DMS(st.st_size), DMS(MAX_DICT_FILE));
 
-    if (min_len > st.st_size) min_len = st.st_size;
-    if (max_len < st.st_size) max_len = st.st_size;
+    if (min_len > st.st_size)
+      min_len = st.st_size;
+    if (max_len < st.st_size)
+      max_len = st.st_size;
 
     extras = ck_realloc_block(extras, (extras_cnt + 1) *
-               sizeof(struct extra_data));
+                                          sizeof(struct extra_data));
 
     extras[extras_cnt].data = ck_alloc(st.st_size);
-    extras[extras_cnt].len  = st.st_size;
+    extras[extras_cnt].len = st.st_size;
 
     fd = open(fn, O_RDONLY);
 
-    if (fd < 0) PFATAL("Unable to open '%s'", fn);
+    if (fd < 0)
+      PFATAL("Unable to open '%s'", fn);
 
     ck_read(fd, extras[extras_cnt].data, st.st_size, fn);
 
@@ -2763,14 +2963,14 @@ static void load_extras(u8* dir) {
     ck_free(fn);
 
     extras_cnt++;
-
   }
 
   closedir(d);
 
 check_and_sort:
 
-  if (!extras_cnt) FATAL("No usable files in '%s'", dir);
+  if (!extras_cnt)
+    FATAL("No usable files in '%s'", dir);
 
   qsort(extras, extras_cnt, sizeof(struct extra_data), compare_extras_len);
 
@@ -2784,59 +2984,62 @@ check_and_sort:
   if (extras_cnt > MAX_DET_EXTRAS)
     WARNF("More than %u tokens - will use them probabilistically.",
           MAX_DET_EXTRAS);
-
 }
-
-
-
 
 /* Helper function for maybe_add_auto() */
 
-static inline u8 memcmp_nocase(u8* m1, u8* m2, u32 len) {
+static inline u8 memcmp_nocase(u8 *m1, u8 *m2, u32 len)
+{
 
-  while (len--) if (tolower(*(m1++)) ^ tolower(*(m2++))) return 1;
+  while (len--)
+    if (tolower(*(m1++)) ^ tolower(*(m2++)))
+      return 1;
   return 0;
-
 }
-
 
 /* Maybe add automatic extra. */
 
-static void maybe_add_auto(u8* mem, u32 len) {
+static void maybe_add_auto(u8 *mem, u32 len)
+{
 
   u32 i;
 
   /* Allow users to specify that they don't want auto dictionaries. */
 
-  if (!MAX_AUTO_EXTRAS || !USE_AUTO_EXTRAS) return;
+  if (!MAX_AUTO_EXTRAS || !USE_AUTO_EXTRAS)
+    return;
 
   /* Skip runs of identical bytes. */
 
   for (i = 1; i < len; i++)
-    if (mem[0] ^ mem[i]) break;
+    if (mem[0] ^ mem[i])
+      break;
 
-  if (i == len) return;
+  if (i == len)
+    return;
 
   /* Reject builtin interesting values. */
 
-  if (len == 2) {
+  if (len == 2)
+  {
 
     i = sizeof(interesting_16) >> 1;
 
     while (i--)
-      if (*((u16*)mem) == interesting_16[i] ||
-          *((u16*)mem) == SWAP16(interesting_16[i])) return;
-
+      if (*((u16 *)mem) == interesting_16[i] ||
+          *((u16 *)mem) == SWAP16(interesting_16[i]))
+        return;
   }
 
-  if (len == 4) {
+  if (len == 4)
+  {
 
     i = sizeof(interesting_32) >> 2;
 
     while (i--)
-      if (*((u32*)mem) == interesting_32[i] ||
-          *((u32*)mem) == SWAP32(interesting_32[i])) return;
-
+      if (*((u32 *)mem) == interesting_32[i] ||
+          *((u32 *)mem) == SWAP32(interesting_32[i]))
+        return;
   }
 
   /* Reject anything that matches existing extras. Do a case-insensitive
@@ -2844,51 +3047,54 @@ static void maybe_add_auto(u8* mem, u32 len) {
      by size. */
 
   for (i = 0; i < extras_cnt; i++)
-    if (extras[i].len >= len) break;
+    if (extras[i].len >= len)
+      break;
 
   for (; i < extras_cnt && extras[i].len == len; i++)
-    if (!memcmp_nocase(extras[i].data, mem, len)) return;
+    if (!memcmp_nocase(extras[i].data, mem, len))
+      return;
 
   /* Last but not least, check a_extras[] for matches. There are no
      guarantees of a particular sort order. */
 
   auto_changed = 1;
 
-  for (i = 0; i < a_extras_cnt; i++) {
+  for (i = 0; i < a_extras_cnt; i++)
+  {
 
-    if (a_extras[i].len == len && !memcmp_nocase(a_extras[i].data, mem, len)) {
+    if (a_extras[i].len == len && !memcmp_nocase(a_extras[i].data, mem, len))
+    {
 
       a_extras[i].hit_cnt++;
       goto sort_a_extras;
-
     }
-
   }
 
   /* At this point, looks like we're dealing with a new entry. So, let's
      append it if we have room. Otherwise, let's randomly evict some other
      entry from the bottom half of the list. */
 
-  if (a_extras_cnt < MAX_AUTO_EXTRAS) {
+  if (a_extras_cnt < MAX_AUTO_EXTRAS)
+  {
 
     a_extras = ck_realloc_block(a_extras, (a_extras_cnt + 1) *
-                                sizeof(struct extra_data));
+                                              sizeof(struct extra_data));
 
     a_extras[a_extras_cnt].data = ck_memdup(mem, len);
-    a_extras[a_extras_cnt].len  = len;
+    a_extras[a_extras_cnt].len = len;
     a_extras_cnt++;
-
-  } else {
+  }
+  else
+  {
 
     i = MAX_AUTO_EXTRAS / 2 +
         UR((MAX_AUTO_EXTRAS + 1) / 2);
 
     ck_free(a_extras[i].data);
 
-    a_extras[i].data    = ck_memdup(mem, len);
-    a_extras[i].len     = len;
+    a_extras[i].data = ck_memdup(mem, len);
+    a_extras[i].len = len;
     a_extras[i].hit_cnt = 0;
-
   }
 
 sort_a_extras:
@@ -2902,58 +3108,60 @@ sort_a_extras:
 
   qsort(a_extras, MIN(USE_AUTO_EXTRAS, a_extras_cnt),
         sizeof(struct extra_data), compare_extras_len);
-
 }
-
 
 /* Save automatically generated extras. */
 
-static void save_auto(void) {
+static void save_auto(void)
+{
 
   u32 i;
 
-  if (!auto_changed) return;
+  if (!auto_changed)
+    return;
   auto_changed = 0;
 
-  for (i = 0; i < MIN(USE_AUTO_EXTRAS, a_extras_cnt); i++) {
+  for (i = 0; i < MIN(USE_AUTO_EXTRAS, a_extras_cnt); i++)
+  {
 
-    u8* fn = alloc_printf("%s/queue/.state/auto_extras/auto_%06u", out_dir, i);
+    u8 *fn = alloc_printf("%s/queue/.state/auto_extras/auto_%06u", out_dir, i);
     s32 fd;
 
     fd = open(fn, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 
-    if (fd < 0) PFATAL("Unable to create '%s'", fn);
+    if (fd < 0)
+      PFATAL("Unable to create '%s'", fn);
 
     ck_write(fd, a_extras[i].data, a_extras[i].len, fn);
 
     close(fd);
     ck_free(fn);
-
   }
-
 }
-
 
 /* Load automatically generated extras. */
 
-static void load_auto(void) {
+static void load_auto(void)
+{
 
   u32 i;
 
-  for (i = 0; i < USE_AUTO_EXTRAS; i++) {
+  for (i = 0; i < USE_AUTO_EXTRAS; i++)
+  {
 
-    u8  tmp[MAX_AUTO_EXTRA + 1];
-    u8* fn = alloc_printf("%s/.state/auto_extras/auto_%06u", in_dir, i);
+    u8 tmp[MAX_AUTO_EXTRA + 1];
+    u8 *fn = alloc_printf("%s/.state/auto_extras/auto_%06u", in_dir, i);
     s32 fd, len;
 
     fd = open(fn, O_RDONLY, 0600);
 
-    if (fd < 0) {
+    if (fd < 0)
+    {
 
-      if (errno != ENOENT) PFATAL("Unable to open '%s'", fn);
+      if (errno != ENOENT)
+        PFATAL("Unable to open '%s'", fn);
       ck_free(fn);
       break;
-
     }
 
     /* We read one byte more to cheaply detect tokens that are too
@@ -2961,25 +3169,26 @@ static void load_auto(void) {
 
     len = read(fd, tmp, MAX_AUTO_EXTRA + 1);
 
-    if (len < 0) PFATAL("Unable to read from '%s'", fn);
+    if (len < 0)
+      PFATAL("Unable to read from '%s'", fn);
 
     if (len >= MIN_AUTO_EXTRA && len <= MAX_AUTO_EXTRA)
       maybe_add_auto(tmp, len);
 
     close(fd);
     ck_free(fn);
-
   }
 
-  if (i) OKF("Loaded %u auto-discovered dictionary tokens.", i);
-  else OKF("No auto-generated dictionary tokens to reuse.");
-
+  if (i)
+    OKF("Loaded %u auto-discovered dictionary tokens.", i);
+  else
+    OKF("No auto-generated dictionary tokens to reuse.");
 }
-
 
 /* Destroy extras. */
 
-static void destroy_extras(void) {
+static void destroy_extras(void)
+{
 
   u32 i;
 
@@ -2992,12 +3201,12 @@ static void destroy_extras(void) {
     ck_free(a_extras[i].data);
 
   ck_free(a_extras);
-
 }
 
 /* Move process to the network namespace "netns_name" */
 
-static void move_process_to_netns() {
+static void move_process_to_netns()
+{
   const char *netns_path_fmt = "/var/run/netns/%s";
   char netns_path[272]; /* 15 for "/var/.." + 256 for netns name + 1 '\0' */
   int netns_fd;
@@ -3023,7 +3232,8 @@ static void move_process_to_netns() {
    cloning a stopped child. So, we just execute once, and then send commands
    through a pipe. The other part of this logic is in afl-as.h. */
 
-EXP_ST void init_forkserver(char** argv) {
+EXP_ST void init_forkserver(char **argv)
+{
 
   static struct itimerval it;
   int st_pipe[2], ctl_pipe[2];
@@ -3032,27 +3242,31 @@ EXP_ST void init_forkserver(char** argv) {
 
   ACTF("Spinning up the fork server...");
 
-  if (pipe(st_pipe) || pipe(ctl_pipe)) PFATAL("pipe() failed");
+  if (pipe(st_pipe) || pipe(ctl_pipe))
+    PFATAL("pipe() failed");
 
   forksrv_pid = fork();
 
-  if (forksrv_pid < 0) PFATAL("fork() failed");
+  if (forksrv_pid < 0)
+    PFATAL("fork() failed");
 
-  if (!forksrv_pid) {
+  if (!forksrv_pid)
+  {
 
     struct rlimit r;
 
     /* Umpf. On OpenBSD, the default fd limit for root users is set to
        soft 128. Let's try to fix that... */
 
-    if (!getrlimit(RLIMIT_NOFILE, &r) && r.rlim_cur < FORKSRV_FD + 2) {
+    if (!getrlimit(RLIMIT_NOFILE, &r) && r.rlim_cur < FORKSRV_FD + 2)
+    {
 
       r.rlim_cur = FORKSRV_FD + 2;
       setrlimit(RLIMIT_NOFILE, &r); /* Ignore errors */
-
     }
 
-    if (mem_limit) {
+    if (mem_limit)
+    {
 
       r.rlim_max = r.rlim_cur = ((rlim_t)mem_limit) << 20;
 
@@ -3069,8 +3283,6 @@ EXP_ST void init_forkserver(char** argv) {
       setrlimit(RLIMIT_DATA, &r); /* Ignore errors */
 
 #endif /* ^RLIMIT_AS */
-
-
     }
 
     /* Dumping cores is slow and can lead to anomalies if SIGKILL is delivered
@@ -3093,21 +3305,24 @@ EXP_ST void init_forkserver(char** argv) {
     dup2(dev_null_fd, 1);
     dup2(dev_null_fd, 2);
 
-    if (out_file) {
+    if (out_file)
+    {
 
       dup2(dev_null_fd, 0);
-
-    } else {
+    }
+    else
+    {
 
       dup2(out_fd, 0);
       close(out_fd);
-
     }
 
     /* Set up control and status pipes, close the unneeded original fds. */
 
-    if (dup2(ctl_pipe[0], FORKSRV_FD) < 0) PFATAL("dup2() failed");
-    if (dup2(st_pipe[1], FORKSRV_FD + 1) < 0) PFATAL("dup2() failed");
+    if (dup2(ctl_pipe[0], FORKSRV_FD) < 0)
+      PFATAL("dup2() failed");
+    if (dup2(st_pipe[1], FORKSRV_FD + 1) < 0)
+      PFATAL("dup2() failed");
 
     close(ctl_pipe[0]);
     close(ctl_pipe[1]);
@@ -3122,32 +3337,34 @@ EXP_ST void init_forkserver(char** argv) {
     /* This should improve performance a bit, since it stops the linker from
        doing extra work post-fork(). */
 
-    if (!getenv("LD_BIND_LAZY")) setenv("LD_BIND_NOW", "1", 0);
+    if (!getenv("LD_BIND_LAZY"))
+      setenv("LD_BIND_NOW", "1", 0);
 
     /* Set sane defaults for ASAN if nothing else specified. */
 
     setenv("ASAN_OPTIONS", "abort_on_error=1:"
                            "detect_leaks=0:"
                            "symbolize=0:"
-                           "allocator_may_return_null=1", 0);
+                           "allocator_may_return_null=1",
+           0);
 
     /* MSAN is tricky, because it doesn't support abort_on_error=1 at this
        point. So, we do this in a very hacky way. */
 
     setenv("MSAN_OPTIONS", "exit_code=" STRINGIFY(MSAN_ERROR) ":"
-                           "symbolize=0:"
-                           "abort_on_error=1:"
-                           "allocator_may_return_null=1:"
-                           "msan_track_origins=0", 0);
+                                                              "symbolize=0:"
+                                                              "abort_on_error=1:"
+                                                              "allocator_may_return_null=1:"
+                                                              "msan_track_origins=0",
+           0);
 
     execv(target_path, argv);
 
     /* Use a distinctive bitmap signature to tell the parent about execv()
        falling through. */
 
-    *(u32*)trace_bits = EXEC_FAIL_SIG;
+    *(u32 *)trace_bits = EXEC_FAIL_SIG;
     exit(0);
-
   }
 
   /* Close the unneeded endpoints. */
@@ -3156,7 +3373,7 @@ EXP_ST void init_forkserver(char** argv) {
   close(st_pipe[1]);
 
   fsrv_ctl_fd = ctl_pipe[1];
-  fsrv_st_fd  = st_pipe[0];
+  fsrv_st_fd = st_pipe[0];
 
   /* Wait for the fork server to come up, but don't wait too long. */
 
@@ -3175,7 +3392,8 @@ EXP_ST void init_forkserver(char** argv) {
   /* If we have a four-byte "hello" message from the server, we're all set.
      Otherwise, try to figure out what went wrong. */
 
-  if (rlen == 4) {
+  if (rlen == 4)
+  {
     OKF("All right - fork server is up.");
     return;
   }
@@ -3186,17 +3404,21 @@ EXP_ST void init_forkserver(char** argv) {
   if (waitpid(forksrv_pid, &status, 0) <= 0)
     PFATAL("waitpid() failed");
 
-  if (WIFSIGNALED(status)) {
+  if (WIFSIGNALED(status))
+  {
 
-    if (mem_limit && mem_limit < 500 && uses_asan) {
+    if (mem_limit && mem_limit < 500 && uses_asan)
+    {
 
       SAYF("\n" cLRD "[-] " cRST
            "Whoops, the target binary crashed suddenly, before receiving any input\n"
            "    from the fuzzer! Since it seems to be built with ASAN and you have a\n"
            "    restrictive memory limit configured, this is expected; please read\n"
-           "    %s/notes_for_asan.txt for help.\n", doc_path);
-
-    } else if (!mem_limit) {
+           "    %s/notes_for_asan.txt for help.\n",
+           doc_path);
+    }
+    else if (!mem_limit)
+    {
 
       SAYF("\n" cLRD "[-] " cRST
            "Whoops, the target binary crashed suddenly, before receiving any input\n"
@@ -3215,8 +3437,9 @@ EXP_ST void init_forkserver(char** argv) {
 
            "    - Less likely, there is a horrible bug in the fuzzer. If other options\n"
            "      fail, poke <lcamtuf@coredump.cx> for troubleshooting tips.\n");
-
-    } else {
+    }
+    else
+    {
 
       SAYF("\n" cLRD "[-] " cRST
            "Whoops, the target binary crashed suddenly, before receiving any input\n"
@@ -3250,32 +3473,34 @@ EXP_ST void init_forkserver(char** argv) {
            "    - Less likely, there is a horrible bug in the fuzzer. If other options\n"
            "      fail, poke <lcamtuf@coredump.cx> for troubleshooting tips.\n",
            DMS(mem_limit << 20), mem_limit - 1);
-
     }
 
     FATAL("Fork server crashed with signal %d", WTERMSIG(status));
-
   }
 
-  if (*(u32*)trace_bits == EXEC_FAIL_SIG)
+  if (*(u32 *)trace_bits == EXEC_FAIL_SIG)
     FATAL("Unable to execute target application ('%s')", argv[0]);
 
-  if (mem_limit && mem_limit < 500 && uses_asan) {
+  if (mem_limit && mem_limit < 500 && uses_asan)
+  {
 
     SAYF("\n" cLRD "[-] " cRST
-           "Hmm, looks like the target binary terminated before we could complete a\n"
-           "    handshake with the injected code. Since it seems to be built with ASAN and\n"
-           "    you have a restrictive memory limit configured, this is expected; please\n"
-           "    read %s/notes_for_asan.txt for help.\n", doc_path);
-
-  } else if (!mem_limit) {
+         "Hmm, looks like the target binary terminated before we could complete a\n"
+         "    handshake with the injected code. Since it seems to be built with ASAN and\n"
+         "    you have a restrictive memory limit configured, this is expected; please\n"
+         "    read %s/notes_for_asan.txt for help.\n",
+         doc_path);
+  }
+  else if (!mem_limit)
+  {
 
     SAYF("\n" cLRD "[-] " cRST
          "Hmm, looks like the target binary terminated before we could complete a\n"
          "    handshake with the injected code. Perhaps there is a horrible bug in the\n"
          "    fuzzer. Poke <lcamtuf@coredump.cx> for troubleshooting tips.\n");
-
-  } else {
+  }
+  else
+  {
 
     SAYF("\n" cLRD "[-] " cRST
          "Hmm, looks like the target binary terminated before we could complete a\n"
@@ -3298,22 +3523,20 @@ EXP_ST void init_forkserver(char** argv) {
          "    - Less likely, there is a horrible bug in the fuzzer. If other options\n"
          "      fail, poke <lcamtuf@coredump.cx> for troubleshooting tips.\n",
          getenv(DEFER_ENV_VAR) ? "three" : "two",
-         getenv(DEFER_ENV_VAR) ?
-         "    - You are using deferred forkserver, but __AFL_INIT() is never\n"
-         "      reached before the program terminates.\n\n" : "",
+         getenv(DEFER_ENV_VAR) ? "    - You are using deferred forkserver, but __AFL_INIT() is never\n"
+                                 "      reached before the program terminates.\n\n"
+                               : "",
          DMS(mem_limit << 20), mem_limit - 1);
-
   }
 
   FATAL("Fork server handshake failed");
-
 }
-
 
 /* Execute target application, monitoring for timeouts. Return status
    information. The called program will update trace_bits[]. */
 
-static u8 run_target(char** argv, u32 timeout) {
+static u8 run_target(char **argv, u32 timeout)
+{
 
   static struct itimerval it;
   static u32 prev_timed_out = 0;
@@ -3336,17 +3559,21 @@ static u8 run_target(char** argv, u32 timeout) {
      execve(). There is a bit of code duplication between here and
      init_forkserver(), but c'est la vie. */
 
-  if (dumb_mode == 1 || no_forkserver) {
+  if (dumb_mode == 1 || no_forkserver)
+  {
 
     child_pid = fork();
 
-    if (child_pid < 0) PFATAL("fork() failed");
+    if (child_pid < 0)
+      PFATAL("fork() failed");
 
-    if (!child_pid) {
+    if (!child_pid)
+    {
 
       struct rlimit r;
 
-      if (mem_limit) {
+      if (mem_limit)
+      {
 
         r.rlim_max = r.rlim_cur = ((rlim_t)mem_limit) << 20;
 
@@ -3359,7 +3586,6 @@ static u8 run_target(char** argv, u32 timeout) {
         setrlimit(RLIMIT_DATA, &r); /* Ignore errors */
 
 #endif /* ^RLIMIT_AS */
-
       }
 
       r.rlim_max = r.rlim_cur = 0;
@@ -3379,15 +3605,16 @@ static u8 run_target(char** argv, u32 timeout) {
       dup2(dev_null_fd, 1);
       dup2(dev_null_fd, 2);
 
-      if (out_file) {
+      if (out_file)
+      {
 
         dup2(dev_null_fd, 0);
-
-      } else {
+      }
+      else
+      {
 
         dup2(out_fd, 0);
         close(out_fd);
-
       }
 
       /* On Linux, would be faster to use O_CLOEXEC. Maybe TODO. */
@@ -3402,45 +3629,49 @@ static u8 run_target(char** argv, u32 timeout) {
       setenv("ASAN_OPTIONS", "abort_on_error=1:"
                              "detect_leaks=0:"
                              "symbolize=0:"
-                             "allocator_may_return_null=1", 0);
+                             "allocator_may_return_null=1",
+             0);
 
       setenv("MSAN_OPTIONS", "exit_code=" STRINGIFY(MSAN_ERROR) ":"
-                             "symbolize=0:"
-                             "msan_track_origins=0", 0);
+                                                                "symbolize=0:"
+                                                                "msan_track_origins=0",
+             0);
 
       execv(target_path, argv);
 
       /* Use a distinctive bitmap value to tell the parent about execv()
          falling through. */
 
-      *(u32*)trace_bits = EXEC_FAIL_SIG;
+      *(u32 *)trace_bits = EXEC_FAIL_SIG;
       exit(0);
-
     }
-
-  } else {
+  }
+  else
+  {
 
     s32 res;
 
     /* In non-dumb mode, we have the fork server up and running, so simply
        tell it to have at it, and then read back PID. */
 
-    if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4) {
+    if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4)
+    {
 
-      if (stop_soon) return 0;
+      if (stop_soon)
+        return 0;
       RPFATAL(res, "Unable to request new process from fork server (OOM?)");
-
     }
 
-    if ((res = read(fsrv_st_fd, &child_pid, 4)) != 4) {
+    if ((res = read(fsrv_st_fd, &child_pid, 4)) != 4)
+    {
 
-      if (stop_soon) return 0;
+      if (stop_soon)
+        return 0;
       RPFATAL(res, "Unable to request new process from fork server (OOM?)");
-
     }
 
-    if (child_pid <= 0) FATAL("Fork server is misbehaving (OOM?)");
-
+    if (child_pid <= 0)
+      FATAL("Fork server is misbehaving (OOM?)");
   }
 
   /* Configure timeout, as requested by user, then wait for child to terminate. */
@@ -3452,28 +3683,34 @@ static u8 run_target(char** argv, u32 timeout) {
 
   /* The SIGALRM handler simply kills the child_pid and sets child_timed_out. */
 
-  if (dumb_mode == 1 || no_forkserver) {
-    if (use_net) send_over_network();
-    if (waitpid(child_pid, &status, 0) <= 0) PFATAL("waitpid() failed");
-
-  } else {
-    if (use_net) send_over_network();
+  if (dumb_mode == 1 || no_forkserver)
+  {
+    if (use_net)
+      send_over_network();
+    if (waitpid(child_pid, &status, 0) <= 0)
+      PFATAL("waitpid() failed");
+  }
+  else
+  {
+    if (use_net)
+      send_over_network();
     s32 res;
 
-    if ((res = read(fsrv_st_fd, &status, 4)) != 4) {
+    if ((res = read(fsrv_st_fd, &status, 4)) != 4)
+    {
 
-      if (stop_soon) return 0;
+      if (stop_soon)
+        return 0;
       RPFATAL(res, "Unable to communicate with fork server (OOM?)");
-
     }
-
   }
 
-  if (!WIFSTOPPED(status)) child_pid = 0;
+  if (!WIFSTOPPED(status))
+    child_pid = 0;
 
   getitimer(ITIMER_REAL, &it);
-  exec_ms = (u64) timeout - (it.it_value.tv_sec * 1000 +
-                             it.it_value.tv_usec / 1000);
+  exec_ms = (u64)timeout - (it.it_value.tv_sec * 1000 +
+                            it.it_value.tv_usec / 1000);
 
   it.it_value.tv_sec = 0;
   it.it_value.tv_usec = 0;
@@ -3489,34 +3726,37 @@ static u8 run_target(char** argv, u32 timeout) {
   update_state_bitmap();
   MEM_BARRIER();
 
-  tb4 = *(u32*)trace_bits;
+  tb4 = *(u32 *)trace_bits;
 
 #ifdef WORD_SIZE_64
-  classify_counts((u64*)trace_bits);
+  classify_counts((u64 *)trace_bits);
 #else
-  classify_counts((u32*)trace_bits);
+  classify_counts((u32 *)trace_bits);
 #endif /* ^WORD_SIZE_64 */
 
   prev_timed_out = child_timed_out;
 
   /* Report outcome to caller. */
 
-  if (WIFSIGNALED(status) && !stop_soon) {
+  if (WIFSIGNALED(status) && !stop_soon)
+  {
 
     kill_signal = WTERMSIG(status);
 
-    if (child_timed_out && kill_signal == SIGKILL) return FAULT_TMOUT;
+    if (child_timed_out && kill_signal == SIGKILL)
+      return FAULT_TMOUT;
 
-    if (kill_signal == SIGTERM) return FAULT_NONE;
+    if (kill_signal == SIGTERM)
+      return FAULT_NONE;
 
     return FAULT_CRASH;
-
   }
 
   /* A somewhat nasty hack for MSAN, which doesn't support abort_on_error and
      must use a special exit code. */
 
-  if (uses_asan && WEXITSTATUS(status) == MSAN_ERROR) {
+  if (uses_asan && WEXITSTATUS(status) == MSAN_ERROR)
+  {
     kill_signal = 0;
     return FAULT_CRASH;
   }
@@ -3526,41 +3766,43 @@ static u8 run_target(char** argv, u32 timeout) {
 
   /* It makes sense to account for the slowest units only if the testcase was run
   under the user defined timeout. */
-  if (!(timeout > exec_tmout) && (slowest_exec_ms < exec_ms)) {
+  if (!(timeout > exec_tmout) && (slowest_exec_ms < exec_ms))
+  {
     slowest_exec_ms = exec_ms;
   }
 
   return FAULT_NONE;
-
 }
-
 
 /* Write modified data to file for testing. If out_file is set, the old file
    is unlinked and a new one is created. Otherwise, out_fd is rewound and
    truncated. */
 
-static void write_to_testcase(void* mem, u32 len) {
+static void write_to_testcase(void *mem, u32 len)
+{
 
-  //AFLNet sends data via network so it does not need this function
-
+  // AFLNet sends data via network so it does not need this function
 }
 
 /*****************************************************
  * 新增代码: 写入IPSM .dot文件的辅助函数 (NEW CODE) *
  *****************************************************/
 /* Write the IPSM graph to a .dot file. */
-static void write_ipsm_dot_file(void) {
+static void write_ipsm_dot_file(void)
+{
 
   /* Do not write if state-aware mode is not enabled or graph is not initialized. */
-  if (!state_aware_mode || !ipsm) return;
+  if (!state_aware_mode || !ipsm)
+    return;
 
   s32 fd;
-  u8* tmp;
+  u8 *tmp;
 
   tmp = alloc_printf("%s/ipsm.dot", out_dir);
   fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600); /* Use O_TRUNC to overwrite */
 
-  if (fd < 0) {
+  if (fd < 0)
+  {
     WARNF("Unable to create '%s' for writing", tmp);
     ck_free(tmp);
     return;
@@ -3568,13 +3810,16 @@ static void write_ipsm_dot_file(void) {
 
   /* Do not PFATAL here, as this might be called from a signal handler. */
   ipsm_dot_file = fdopen(fd, "w");
-  if (ipsm_dot_file) {
-      agwrite(ipsm, ipsm_dot_file);
-      /* fclose() is better here as it also closes the underlying fd */
-      fclose(ipsm_dot_file);
-  } else {
-      WARNF("fdopen() failed for '%s'", tmp);
-      close(fd);
+  if (ipsm_dot_file)
+  {
+    agwrite(ipsm, ipsm_dot_file);
+    /* fclose() is better here as it also closes the underlying fd */
+    fclose(ipsm_dot_file);
+  }
+  else
+  {
+    WARNF("fdopen() failed for '%s'", tmp);
+    close(fd);
   }
 
   ck_free(tmp);
@@ -3582,8 +3827,6 @@ static void write_ipsm_dot_file(void) {
   /* Update the timestamp */
   last_ipsm_dot_ms = get_cur_time();
   new_paths_since_dot = 0;
-
-
 }
 /*****************************************************
  *                      结束新增代码                    *
@@ -3595,19 +3838,20 @@ static void show_stats(void);
    to warn about flaky or otherwise problematic test cases early on; and when
    new paths are discovered to detect variable behavior and so on. */
 
-static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
-                         u32 handicap, u8 from_queue) {
+static u8 calibrate_case(char **argv, struct queue_entry *q, u8 *use_mem,
+                         u32 handicap, u8 from_queue)
+{
 
   static u8 first_trace[MAP_SIZE];
 
-  u8  fault = 0, new_bits = 0, var_detected = 0,
-      first_run = (q->exec_cksum == 0);
+  u8 fault = 0, new_bits = 0, var_detected = 0,
+     first_run = (q->exec_cksum == 0);
 
   u64 start_us, stop_us;
 
   s32 old_sc = stage_cur, old_sm = stage_max;
   u32 use_tmout = exec_tmout;
-  u8* old_sn = stage_name;
+  u8 *old_sn = stage_name;
 
   /* Be a bit more generous about timeouts when resuming sessions, or when
      trying to calibrate already-added finds. This helps avoid trouble due
@@ -3620,7 +3864,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   q->cal_failed++;
 
   stage_name = "calibration";
-  stage_max  = fast_cal ? 3 : CAL_CYCLES;
+  stage_max = fast_cal ? 3 : CAL_CYCLES;
 
   /* Make sure the forkserver is up before we do anything, and let's not
      count its spin-up time toward binary calibration. */
@@ -3628,15 +3872,18 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   if (dumb_mode != 1 && !no_forkserver && !forksrv_pid)
     init_forkserver(argv);
 
-  if (q->exec_cksum) memcpy(first_trace, trace_bits, MAP_SIZE);
+  if (q->exec_cksum)
+    memcpy(first_trace, trace_bits, MAP_SIZE);
 
   start_us = get_cur_time_us();
 
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
 
     u32 cksum;
 
-    if (!first_run && !(stage_cur % stats_update_freq)) show_stats();
+    if (!first_run && !(stage_cur % stats_update_freq))
+      show_stats();
 
     write_to_testcase(use_mem, q->len);
 
@@ -3645,60 +3892,63 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
     /* stop_soon is set by the handler for Ctrl+C. When it's pressed,
        we want to bail out quickly. */
 
-    if (stop_soon || fault != crash_mode) goto abort_calibration;
+    if (stop_soon || fault != crash_mode)
+      goto abort_calibration;
 
-    if (!dumb_mode && !stage_cur && !count_bytes(trace_bits)) {
+    if (!dumb_mode && !stage_cur && !count_bytes(trace_bits))
+    {
       fault = FAULT_NOINST;
       goto abort_calibration;
     }
 
     cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
-    if (q->exec_cksum != cksum) {
+    if (q->exec_cksum != cksum)
+    {
 
       u8 hnb = has_new_bits(virgin_bits);
-      if (hnb > new_bits) new_bits = hnb;
+      if (hnb > new_bits)
+        new_bits = hnb;
 
-      if (q->exec_cksum) {
+      if (q->exec_cksum)
+      {
 
         u32 i;
 
-        for (i = 0; i < MAP_SIZE; i++) {
+        for (i = 0; i < MAP_SIZE; i++)
+        {
 
-          if (!var_bytes[i] && first_trace[i] != trace_bits[i]) {
+          if (!var_bytes[i] && first_trace[i] != trace_bits[i])
+          {
 
             var_bytes[i] = 1;
-            stage_max    = CAL_CYCLES_LONG;
-
+            stage_max = CAL_CYCLES_LONG;
           }
-
         }
 
         var_detected = 1;
-
-      } else {
+      }
+      else
+      {
 
         q->exec_cksum = cksum;
         memcpy(first_trace, trace_bits, MAP_SIZE);
-
       }
-
     }
-
   }
 
   stop_us = get_cur_time_us();
 
-  total_cal_us     += stop_us - start_us;
+  total_cal_us += stop_us - start_us;
   total_cal_cycles += stage_max;
 
   /* OK, let's collect some stats about the performance of this test case.
      This is used for fuzzing air time calculations in calculate_score(). */
 
-  q->exec_us     = (stop_us - start_us) / stage_max;
+  q->exec_us = (stop_us - start_us) / stage_max;
   q->bitmap_size = count_bytes(trace_bits);
-  q->handicap    = handicap;
-  q->cal_failed  = 0;
+  q->handicap = handicap;
+  q->cal_failed = 0;
 
   total_bitmap_size += q->bitmap_size;
   total_bitmap_entries++;
@@ -3709,78 +3959,84 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
      parent. This is a non-critical problem, but something to warn the user
      about. */
 
-  if (!dumb_mode && first_run && !fault && !new_bits) fault = FAULT_NOBITS;
+  if (!dumb_mode && first_run && !fault && !new_bits)
+    fault = FAULT_NOBITS;
 
 abort_calibration:
 
-  if (new_bits == 2 && !q->has_new_cov) {
+  if (new_bits == 2 && !q->has_new_cov)
+  {
     q->has_new_cov = 1;
     queued_with_cov++;
   }
 
   /* Mark variable paths. */
 
-  if (var_detected) {
+  if (var_detected)
+  {
 
     var_byte_count = count_bytes(var_bytes);
 
-    if (!q->var_behavior) {
+    if (!q->var_behavior)
+    {
       mark_as_variable(q);
       queued_variable++;
     }
-
   }
 
   stage_name = old_sn;
-  stage_cur  = old_sc;
-  stage_max  = old_sm;
+  stage_cur = old_sc;
+  stage_max = old_sm;
 
-  if (!first_run) show_stats();
+  if (!first_run)
+    show_stats();
 
   return fault;
-
 }
-
 
 /* Examine map coverage. Called once, for first test case. */
 
-static void check_map_coverage(void) {
+static void check_map_coverage(void)
+{
 
   u32 i;
 
-  if (count_bytes(trace_bits) < 100) return;
+  if (count_bytes(trace_bits) < 100)
+    return;
 
   for (i = (1 << (MAP_SIZE_POW2 - 1)); i < MAP_SIZE; i++)
-    if (trace_bits[i]) return;
+    if (trace_bits[i])
+      return;
 
   WARNF("Recompile binary with newer version of afl to improve coverage!");
-
 }
-
 
 /* Perform dry run of all test cases to confirm that the app is working as
    expected. This is done only for the initial inputs, and only once. */
 
-static void perform_dry_run(char** argv) {
+static void perform_dry_run(char **argv)
+{
 
-  struct queue_entry* q = queue;
+  struct queue_entry *q = queue;
   u32 cal_failures = 0;
-  u8* skip_crashes = getenv("AFL_SKIP_CRASHES");
+  u8 *skip_crashes = getenv("AFL_SKIP_CRASHES");
 
-  while (q) {
+  while (q)
+  {
 
-    u8* use_mem;
-    u8  res;
+    u8 *use_mem;
+    u8 res;
     s32 fd;
 
     q->is_initial_seed = 1;
 
-    u8* fn = strrchr(q->fname, '/') + 1;
+    u8 *fn = strrchr(q->fname, '/') + 1;
 
     ACTF("Attempting dry run with '%s'...", fn);
 
     fd = open(q->fname, O_RDONLY);
-    if (fd < 0) PFATAL("Unable to open '%s'", q->fname);
+    if (fd < 0)
+      PFATAL("Unable to open '%s'", q->fname);
 
     use_mem = ck_alloc_nozero(q->len);
 
@@ -3796,7 +4052,8 @@ static void perform_dry_run(char** argv) {
     ck_free(use_mem);
 
     /* Update state-aware variables (e.g., state machine, regions and their annotations */
-    if (state_aware_mode) update_state_aware_variables(q, 1);
+    if (state_aware_mode)
+      update_state_aware_variables(q, 1);
 
     /* save the seed to file for replaying */
     u8 *fn_replay = alloc_printf("%s/replayable-queue/%s", out_dir, basename(q->fname));
@@ -3806,160 +4063,171 @@ static void perform_dry_run(char** argv) {
     /* AFLNet delete the kl_messages */
     delete_kl_messages(kl_messages);
 
-    if (stop_soon) return;
+    if (stop_soon)
+      return;
 
     if (res == crash_mode || res == FAULT_NOBITS)
       SAYF(cGRA "    len = %u, map size = %u, exec speed = %llu us\n" cRST,
            q->len, q->bitmap_size, q->exec_us);
 
-    switch (res) {
+    switch (res)
+    {
 
-      case FAULT_NONE:
+    case FAULT_NONE:
 
-        if (q == queue) check_map_coverage();
+      if (q == queue)
+        check_map_coverage();
 
-        if (crash_mode) FATAL("Test case '%s' does *NOT* crash", fn);
+      if (crash_mode)
+        FATAL("Test case '%s' does *NOT* crash", fn);
 
-        break;
+      break;
 
-      case FAULT_TMOUT:
+    case FAULT_TMOUT:
 
-        if (timeout_given) {
+      if (timeout_given)
+      {
 
-          /* The -t nn+ syntax in the command line sets timeout_given to '2' and
-             instructs afl-fuzz to tolerate but skip queue entries that time
-             out. */
+        /* The -t nn+ syntax in the command line sets timeout_given to '2' and
+           instructs afl-fuzz to tolerate but skip queue entries that time
+           out. */
 
-          if (timeout_given > 1) {
-            WARNF("Test case results in a timeout (skipping)");
-            q->cal_failed = CAL_CHANCES;
-            cal_failures++;
-            break;
-          }
-
-          SAYF("\n" cLRD "[-] " cRST
-               "The program took more than %u ms to process one of the initial test cases.\n"
-               "    Usually, the right thing to do is to relax the -t option - or to delete it\n"
-               "    altogether and allow the fuzzer to auto-calibrate. That said, if you know\n"
-               "    what you are doing and want to simply skip the unruly test cases, append\n"
-               "    '+' at the end of the value passed to -t ('-t %u+').\n", exec_tmout,
-               exec_tmout);
-
-          FATAL("Test case '%s' results in a timeout", fn);
-
-        } else {
-
-          SAYF("\n" cLRD "[-] " cRST
-               "The program took more than %u ms to process one of the initial test cases.\n"
-               "    This is bad news; raising the limit with the -t option is possible, but\n"
-               "    will probably make the fuzzing process extremely slow.\n\n"
-
-               "    If this test case is just a fluke, the other option is to just avoid it\n"
-               "    altogether, and find one that is less of a CPU hog.\n", exec_tmout);
-
-          FATAL("Test case '%s' results in a timeout", fn);
-
-        }
-
-      case FAULT_CRASH:
-
-        if (crash_mode) break;
-
-        if (skip_crashes) {
-          WARNF("Test case results in a crash (skipping)");
+        if (timeout_given > 1)
+        {
+          WARNF("Test case results in a timeout (skipping)");
           q->cal_failed = CAL_CHANCES;
           cal_failures++;
           break;
         }
 
-        if (mem_limit) {
+        SAYF("\n" cLRD "[-] " cRST
+             "The program took more than %u ms to process one of the initial test cases.\n"
+             "    Usually, the right thing to do is to relax the -t option - or to delete it\n"
+             "    altogether and allow the fuzzer to auto-calibrate. That said, if you know\n"
+             "    what you are doing and want to simply skip the unruly test cases, append\n"
+             "    '+' at the end of the value passed to -t ('-t %u+').\n",
+             exec_tmout,
+             exec_tmout);
 
-          SAYF("\n" cLRD "[-] " cRST
-               "Oops, the program crashed with one of the test cases provided. There are\n"
-               "    several possible explanations:\n\n"
+        FATAL("Test case '%s' results in a timeout", fn);
+      }
+      else
+      {
 
-               "    - The test case causes known crashes under normal working conditions. If\n"
-               "      so, please remove it. The fuzzer should be seeded with interesting\n"
-               "      inputs - but not ones that cause an outright crash.\n\n"
+        SAYF("\n" cLRD "[-] " cRST
+             "The program took more than %u ms to process one of the initial test cases.\n"
+             "    This is bad news; raising the limit with the -t option is possible, but\n"
+             "    will probably make the fuzzing process extremely slow.\n\n"
 
-               "    - The current memory limit (%s) is too low for this program, causing\n"
-               "      it to die due to OOM when parsing valid files. To fix this, try\n"
-               "      bumping it up with the -m setting in the command line. If in doubt,\n"
-               "      try something along the lines of:\n\n"
+             "    If this test case is just a fluke, the other option is to just avoid it\n"
+             "    altogether, and find one that is less of a CPU hog.\n",
+             exec_tmout);
 
-#ifdef RLIMIT_AS
-               "      ( ulimit -Sv $[%llu << 10]; /path/to/binary [...] <testcase )\n\n"
-#else
-               "      ( ulimit -Sd $[%llu << 10]; /path/to/binary [...] <testcase )\n\n"
-#endif /* ^RLIMIT_AS */
+        FATAL("Test case '%s' results in a timeout", fn);
+      }
 
-               "      Tip: you can use http://jwilk.net/software/recidivm to quickly\n"
-               "      estimate the required amount of virtual memory for the binary. Also,\n"
-               "      if you are using ASAN, see %s/notes_for_asan.txt.\n\n"
+    case FAULT_CRASH:
 
-#ifdef __APPLE__
-
-               "    - On MacOS X, the semantics of fork() syscalls are non-standard and may\n"
-               "      break afl-fuzz performance optimizations when running platform-specific\n"
-               "      binaries. To fix this, set AFL_NO_FORKSRV=1 in the environment.\n\n"
-
-#endif /* __APPLE__ */
-
-               "    - Least likely, there is a horrible bug in the fuzzer. If other options\n"
-               "      fail, poke <lcamtuf@coredump.cx> for troubleshooting tips.\n",
-               DMS(mem_limit << 20), mem_limit - 1, doc_path);
-
-        } else {
-
-          SAYF("\n" cLRD "[-] " cRST
-               "Oops, the program crashed with one of the test cases provided. There are\n"
-               "    several possible explanations:\n\n"
-
-               "    - The test case causes known crashes under normal working conditions. If\n"
-               "      so, please remove it. The fuzzer should be seeded with interesting\n"
-               "      inputs - but not ones that cause an outright crash.\n\n"
-
-#ifdef __APPLE__
-
-               "    - On MacOS X, the semantics of fork() syscalls are non-standard and may\n"
-               "      break afl-fuzz performance optimizations when running platform-specific\n"
-               "      binaries. To fix this, set AFL_NO_FORKSRV=1 in the environment.\n\n"
-
-#endif /* __APPLE__ */
-
-               "    - Least likely, there is a horrible bug in the fuzzer. If other options\n"
-               "      fail, poke <lcamtuf@coredump.cx> for troubleshooting tips.\n");
-
-        }
-
-        FATAL("Test case '%s' results in a crash", fn);
-
-      case FAULT_ERROR:
-
-        FATAL("Unable to execute target application ('%s')", argv[0]);
-
-      case FAULT_NOINST:
-
-        FATAL("No instrumentation detected");
-
-      case FAULT_NOBITS:
-
-        useless_at_start++;
-
-        if (!in_bitmap && !shuffle_queue)
-          WARNF("No new instrumentation output, test case may be useless.");
-
+      if (crash_mode)
         break;
 
+      if (skip_crashes)
+      {
+        WARNF("Test case results in a crash (skipping)");
+        q->cal_failed = CAL_CHANCES;
+        cal_failures++;
+        break;
+      }
+
+      if (mem_limit)
+      {
+
+        SAYF("\n" cLRD "[-] " cRST
+             "Oops, the program crashed with one of the test cases provided. There are\n"
+             "    several possible explanations:\n\n"
+
+             "    - The test case causes known crashes under normal working conditions. If\n"
+             "      so, please remove it. The fuzzer should be seeded with interesting\n"
+             "      inputs - but not ones that cause an outright crash.\n\n"
+
+             "    - The current memory limit (%s) is too low for this program, causing\n"
+             "      it to die due to OOM when parsing valid files. To fix this, try\n"
+             "      bumping it up with the -m setting in the command line. If in doubt,\n"
+             "      try something along the lines of:\n\n"
+
+#ifdef RLIMIT_AS
+             "      ( ulimit -Sv $[%llu << 10]; /path/to/binary [...] <testcase )\n\n"
+#else
+             "      ( ulimit -Sd $[%llu << 10]; /path/to/binary [...] <testcase )\n\n"
+#endif /* ^RLIMIT_AS */
+
+             "      Tip: you can use http://jwilk.net/software/recidivm to quickly\n"
+             "      estimate the required amount of virtual memory for the binary. Also,\n"
+             "      if you are using ASAN, see %s/notes_for_asan.txt.\n\n"
+
+#ifdef __APPLE__
+
+             "    - On MacOS X, the semantics of fork() syscalls are non-standard and may\n"
+             "      break afl-fuzz performance optimizations when running platform-specific\n"
+             "      binaries. To fix this, set AFL_NO_FORKSRV=1 in the environment.\n\n"
+
+#endif /* __APPLE__ */
+
+             "    - Least likely, there is a horrible bug in the fuzzer. If other options\n"
+             "      fail, poke <lcamtuf@coredump.cx> for troubleshooting tips.\n",
+             DMS(mem_limit << 20), mem_limit - 1, doc_path);
+      }
+      else
+      {
+
+        SAYF("\n" cLRD "[-] " cRST
+             "Oops, the program crashed with one of the test cases provided. There are\n"
+             "    several possible explanations:\n\n"
+
+             "    - The test case causes known crashes under normal working conditions. If\n"
+             "      so, please remove it. The fuzzer should be seeded with interesting\n"
+             "      inputs - but not ones that cause an outright crash.\n\n"
+
+#ifdef __APPLE__
+
+             "    - On MacOS X, the semantics of fork() syscalls are non-standard and may\n"
+             "      break afl-fuzz performance optimizations when running platform-specific\n"
+             "      binaries. To fix this, set AFL_NO_FORKSRV=1 in the environment.\n\n"
+
+#endif /* __APPLE__ */
+
+             "    - Least likely, there is a horrible bug in the fuzzer. If other options\n"
+             "      fail, poke <lcamtuf@coredump.cx> for troubleshooting tips.\n");
+      }
+
+      FATAL("Test case '%s' results in a crash", fn);
+
+    case FAULT_ERROR:
+
+      FATAL("Unable to execute target application ('%s')", argv[0]);
+
+    case FAULT_NOINST:
+
+      FATAL("No instrumentation detected");
+
+    case FAULT_NOBITS:
+
+      useless_at_start++;
+
+      if (!in_bitmap && !shuffle_queue)
+        WARNF("No new instrumentation output, test case may be useless.");
+
+      break;
     }
 
-    if (q->var_behavior) WARNF("Instrumentation output varies across runs.");
+    if (q->var_behavior)
+      WARNF("Instrumentation output varies across runs.");
 
     q = q->next;
-
   }
 
-  if (cal_failures) {
+  if (cal_failures)
+  {
 
     if (cal_failures == queued_paths)
       FATAL("All test cases time out%s, giving up!",
@@ -3971,77 +4239,83 @@ static void perform_dry_run(char** argv) {
 
     if (cal_failures * 5 > queued_paths)
       WARNF(cLRD "High percentage of rejected test cases, check settings!");
-
   }
 
   OKF("All test cases processed.");
-
 }
-
 
 /* Helper function: link() if possible, copy otherwise. */
 
-static void link_or_copy(u8* old_path, u8* new_path) {
+static void link_or_copy(u8 *old_path, u8 *new_path)
+{
 
   s32 i = link(old_path, new_path);
   s32 sfd, dfd;
-  u8* tmp;
+  u8 *tmp;
 
-  if (!i) return;
+  if (!i)
+    return;
 
   sfd = open(old_path, O_RDONLY);
-  if (sfd < 0) PFATAL("Unable to open '%s'", old_path);
+  if (sfd < 0)
+    PFATAL("Unable to open '%s'", old_path);
 
   dfd = open(new_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
-  if (dfd < 0) PFATAL("Unable to create '%s'", new_path);
+  if (dfd < 0)
+    PFATAL("Unable to create '%s'", new_path);
 
   tmp = ck_alloc(64 * 1024);
 
   while ((i = read(sfd, tmp, 64 * 1024)) > 0)
     ck_write(dfd, tmp, i, new_path);
 
-  if (i < 0) PFATAL("read() failed");
+  if (i < 0)
+    PFATAL("read() failed");
 
   ck_free(tmp);
   close(sfd);
   close(dfd);
-
 }
-
 
 static void nuke_resume_dir(void);
 
 /* Create hard links for input test cases in the output directory, choosing
    good names and pivoting accordingly. */
 
-static void pivot_inputs(void) {
+static void pivot_inputs(void)
+{
 
-  struct queue_entry* q = queue;
+  struct queue_entry *q = queue;
   u32 id = 0;
 
   ACTF("Creating hard links for all input files...");
 
-  while (q) {
+  while (q)
+  {
 
-    u8  *nfn, *rsl = strrchr(q->fname, '/');
+    u8 *nfn, *rsl = strrchr(q->fname, '/');
     u32 orig_id;
 
-    if (!rsl) rsl = q->fname; else rsl++;
+    if (!rsl)
+      rsl = q->fname;
+    else
+      rsl++;
 
     /* If the original file name conforms to the syntax and the recorded
        ID matches the one we'd assign, just use the original file name.
        This is valuable for resuming fuzzing runs. */
 
 #ifndef SIMPLE_FILES
-#  define CASE_PREFIX "id:"
+#define CASE_PREFIX "id:"
 #else
-#  define CASE_PREFIX "id_"
+#define CASE_PREFIX "id_"
 #endif /* ^!SIMPLE_FILES */
 
     if (!strncmp(rsl, CASE_PREFIX, 3) &&
-        sscanf(rsl + 3, "%06u", &orig_id) == 1 && orig_id == id) {
+        sscanf(rsl + 3, "%06u", &orig_id) == 1 && orig_id == id)
+    {
 
-      u8* src_str;
+      u8 *src_str;
       u32 src_id;
 
       resuming_fuzz = 1;
@@ -4052,26 +4326,33 @@ static void pivot_inputs(void) {
 
       src_str = strchr(rsl + 3, ':');
 
-      if (src_str && sscanf(src_str + 1, "%06u", &src_id) == 1) {
+      if (src_str && sscanf(src_str + 1, "%06u", &src_id) == 1)
+      {
 
-        struct queue_entry* s = queue;
-        while (src_id-- && s) s = s->next;
-        if (s) q->depth = s->depth + 1;
+        struct queue_entry *s = queue;
+        while (src_id-- && s)
+          s = s->next;
+        if (s)
+          q->depth = s->depth + 1;
 
-        if (max_depth < q->depth) max_depth = q->depth;
-
+        if (max_depth < q->depth)
+          max_depth = q->depth;
       }
-
-    } else {
+    }
+    else
+    {
 
       /* No dice - invent a new name, capturing the original one as a
          substring. */
 
 #ifndef SIMPLE_FILES
 
-      u8* use_name = strstr(rsl, ",orig:");
+      u8 *use_name = strstr(rsl, ",orig:");
 
-      if (use_name) use_name += 6; else use_name = rsl;
+      if (use_name)
+        use_name += 6;
+      else
+        use_name = rsl;
       nfn = alloc_printf("%s/queue/id:%06u,orig:%s", out_dir, id, use_name);
 
 #else
@@ -4079,7 +4360,6 @@ static void pivot_inputs(void) {
       nfn = alloc_printf("%s/queue/id_%06u", out_dir, id);
 
 #endif /* ^!SIMPLE_FILES */
-
     }
 
     /* Pivot to the new queue entry. */
@@ -4090,32 +4370,34 @@ static void pivot_inputs(void) {
 
     /* Make sure that the passed_det value carries over, too. */
 
-    if (q->passed_det) mark_as_det_done(q);
+    if (q->passed_det)
+      mark_as_det_done(q);
 
     q = q->next;
     id++;
-
   }
 
-  if (in_place_resume) nuke_resume_dir();
-
+  if (in_place_resume)
+    nuke_resume_dir();
 }
-
 
 #ifndef SIMPLE_FILES
 
 /* Construct a file name for a new test case, capturing the operation
    that led to its discovery. Uses a static buffer. */
 
-static u8* describe_op(u8 hnb) {
+static u8 *describe_op(u8 hnb)
+{
 
   static u8 ret[256];
 
-  if (syncing_party) {
+  if (syncing_party)
+  {
 
     sprintf(ret, "sync:%s,src:%06u", syncing_party, syncing_case);
-
-  } else {
+  }
+  else
+  {
 
     sprintf(ret, "src:%06u", current_entry);
 
@@ -4124,7 +4406,8 @@ static u8* describe_op(u8 hnb) {
 
     sprintf(ret + strlen(ret), ",op:%s", stage_short);
 
-    if (stage_cur_byte >= 0) {
+    if (stage_cur_byte >= 0)
+    {
 
       sprintf(ret + strlen(ret), ",pos:%u", stage_cur_byte);
 
@@ -4132,38 +4415,40 @@ static u8* describe_op(u8 hnb) {
         sprintf(ret + strlen(ret), ",val:%s%+d",
                 (stage_val_type == STAGE_VAL_BE) ? "be:" : "",
                 stage_cur_val);
-
-    } else sprintf(ret + strlen(ret), ",rep:%u", stage_cur_val);
-
+    }
+    else
+      sprintf(ret + strlen(ret), ",rep:%u", stage_cur_val);
   }
 
-  if (hnb == 2) strcat(ret, ",+cov");
+  if (hnb == 2)
+    strcat(ret, ",+cov");
 
   return ret;
-
 }
 
 #endif /* !SIMPLE_FILES */
 
-
 /* Write a message accompanying the crash directory :-) */
 
-static void write_crash_readme(void) {
+static void write_crash_readme(void)
+{
 
-  u8* fn = alloc_printf("%s/replayable-crashes/README.txt", out_dir);
+  u8 *fn = alloc_printf("%s/replayable-crashes/README.txt", out_dir);
   s32 fd;
-  FILE* f;
+  FILE *f;
 
   fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
   ck_free(fn);
 
   /* Do not die on errors here - that would be impolite. */
 
-  if (fd < 0) return;
+  if (fd < 0)
+    return;
 
   f = fdopen(fd, "w");
 
-  if (!f) {
+  if (!f)
+  {
     close(fd);
     return;
   }
@@ -4186,31 +4471,33 @@ static void write_crash_readme(void) {
 
              "Thanks :-)\n",
 
-             orig_cmdline, DMS(mem_limit << 20)); /* ignore errors */
+          orig_cmdline, DMS(mem_limit << 20)); /* ignore errors */
 
   fclose(f);
-
 }
-
 
 /* Check if the result of an execve() during routine fuzzing is interesting,
    save or queue the input test case for further analysis if so. Returns 1 if
    entry is saved, 0 otherwise. */
 
-static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
+static u8 save_if_interesting(char **argv, void *mem, u32 len, u8 fault)
+{
 
-  u8  *fn = "";
-  u8  hnb;
-  //s32 fd;
-  u8  keeping = 0, res;
+  u8 *fn = "";
+  u8 hnb;
+  // s32 fd;
+  u8 keeping = 0, res;
 
-  if (fault == crash_mode) {
+  if (fault == crash_mode)
+  {
 
     /* Keep only if there are new bits in the map, add to queue for
        future fuzzing, etc. */
 
-    if (!(hnb = has_new_bits(virgin_bits))) {
-      if (crash_mode) total_crashes++;
+    if (!(hnb = has_new_bits(virgin_bits)))
+    {
+      if (crash_mode)
+        total_crashes++;
       return 0;
     }
 
@@ -4230,14 +4517,16 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     /* We use the actual length of all messages (full_len), not the len of the mutated message subsequence (len)*/
     add_to_queue(fn, full_len, 0);
 
-    if (state_aware_mode) update_state_aware_variables(queue_top, 0);
+    if (state_aware_mode)
+      update_state_aware_variables(queue_top, 0);
 
     /* save the seed to file for replaying */
     u8 *fn_replay = alloc_printf("%s/replayable-queue/%s", out_dir, basename(queue_top->fname));
     save_kl_messages_to_file(kl_messages, fn_replay, 1, messages_sent);
     ck_free(fn_replay);
 
-    if (hnb == 2) {
+    if (hnb == 2)
+    {
       queue_top->has_new_cov = 1;
       queued_with_cov++;
     }
@@ -4258,123 +4547,131 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     close(fd);*/
 
     keeping = 1;
-
   }
 
-  switch (fault) {
+  switch (fault)
+  {
 
-    case FAULT_TMOUT:
+  case FAULT_TMOUT:
 
-      /* Timeouts are not very interesting, but we're still obliged to keep
-         a handful of samples. We use the presence of new bits in the
-         hang-specific bitmap as a signal of uniqueness. In "dumb" mode, we
-         just keep everything. */
+    /* Timeouts are not very interesting, but we're still obliged to keep
+       a handful of samples. We use the presence of new bits in the
+       hang-specific bitmap as a signal of uniqueness. In "dumb" mode, we
+       just keep everything. */
 
-      total_tmouts++;
+    total_tmouts++;
 
-      if (unique_hangs >= KEEP_UNIQUE_HANG) return keeping;
+    if (unique_hangs >= KEEP_UNIQUE_HANG)
+      return keeping;
 
-      if (!dumb_mode) {
+    if (!dumb_mode)
+    {
 
 #ifdef WORD_SIZE_64
-        simplify_trace((u64*)trace_bits);
+      simplify_trace((u64 *)trace_bits);
 #else
-        simplify_trace((u32*)trace_bits);
+      simplify_trace((u32 *)trace_bits);
 #endif /* ^WORD_SIZE_64 */
 
-        if (!has_new_bits(virgin_tmout)) return keeping;
+      if (!has_new_bits(virgin_tmout))
+        return keeping;
+    }
 
-      }
+    unique_tmouts++;
 
-      unique_tmouts++;
+    /* Before saving, we make sure that it's a genuine hang by re-running
+       the target with a more generous timeout (unless the default timeout
+       is already generous). */
 
-      /* Before saving, we make sure that it's a genuine hang by re-running
-         the target with a more generous timeout (unless the default timeout
-         is already generous). */
+    if (exec_tmout < hang_tmout)
+    {
 
-      if (exec_tmout < hang_tmout) {
+      u8 new_fault;
+      write_to_testcase(mem, len);
+      new_fault = run_target(argv, hang_tmout);
 
-        u8 new_fault;
-        write_to_testcase(mem, len);
-        new_fault = run_target(argv, hang_tmout);
+      /* A corner case that one user reported bumping into: increasing the
+         timeout actually uncovers a crash. Make sure we don't discard it if
+         so. */
 
-        /* A corner case that one user reported bumping into: increasing the
-           timeout actually uncovers a crash. Make sure we don't discard it if
-           so. */
+      if (!stop_soon && new_fault == FAULT_CRASH)
+        goto keep_as_crash;
 
-        if (!stop_soon && new_fault == FAULT_CRASH) goto keep_as_crash;
-
-        if (stop_soon || new_fault != FAULT_TMOUT) return keeping;
-
-      }
+      if (stop_soon || new_fault != FAULT_TMOUT)
+        return keeping;
+    }
 
 #ifndef SIMPLE_FILES
 
-      fn = alloc_printf("%s/replayable-hangs/id:%06llu,%s", out_dir,
-                        unique_hangs, describe_op(0));
+    fn = alloc_printf("%s/replayable-hangs/id:%06llu,%s", out_dir,
+                      unique_hangs, describe_op(0));
 
 #else
 
-      fn = alloc_printf("%s/replayable-hangs/id_%06llu", out_dir,
-                        unique_hangs);
+    fn = alloc_printf("%s/replayable-hangs/id_%06llu", out_dir,
+                      unique_hangs);
 
 #endif /* ^!SIMPLE_FILES */
 
-      unique_hangs++;
+    unique_hangs++;
 
-      last_hang_time = get_cur_time();
+    last_hang_time = get_cur_time();
 
-      break;
+    break;
 
-    case FAULT_CRASH:
+  case FAULT_CRASH:
 
-keep_as_crash:
+  keep_as_crash:
 
-      /* This is handled in a manner roughly similar to timeouts,
-         except for slightly different limits and no need to re-run test
-         cases. */
+    /* This is handled in a manner roughly similar to timeouts,
+       except for slightly different limits and no need to re-run test
+       cases. */
 
-      total_crashes++;
+    total_crashes++;
 
-      if (unique_crashes >= KEEP_UNIQUE_CRASH) return keeping;
+    if (unique_crashes >= KEEP_UNIQUE_CRASH)
+      return keeping;
 
-      if (!dumb_mode) {
+    if (!dumb_mode)
+    {
 
 #ifdef WORD_SIZE_64
-        simplify_trace((u64*)trace_bits);
+      simplify_trace((u64 *)trace_bits);
 #else
-        simplify_trace((u32*)trace_bits);
+      simplify_trace((u32 *)trace_bits);
 #endif /* ^WORD_SIZE_64 */
 
-        if (!has_new_bits(virgin_crash)) return keeping;
+      if (!has_new_bits(virgin_crash))
+        return keeping;
+    }
 
-      }
-
-      if (!unique_crashes) write_crash_readme();
+    if (!unique_crashes)
+      write_crash_readme();
 
 #ifndef SIMPLE_FILES
 
-      fn = alloc_printf("%s/replayable-crashes/id:%06llu,sig:%02u,%s", out_dir,
-                        unique_crashes, kill_signal, describe_op(0));
+    fn = alloc_printf("%s/replayable-crashes/id:%06llu,sig:%02u,%s", out_dir,
+                      unique_crashes, kill_signal, describe_op(0));
 
 #else
 
-      fn = alloc_printf("%s/replayable-crashes/id_%06llu_%02u", out_dir, unique_crashes,
-                        kill_signal);
+    fn = alloc_printf("%s/replayable-crashes/id_%06llu_%02u", out_dir, unique_crashes,
+                      kill_signal);
 
 #endif /* ^!SIMPLE_FILES */
 
-      unique_crashes++;
+    unique_crashes++;
 
-      last_crash_time = get_cur_time();
-      last_crash_execs = total_execs;
+    last_crash_time = get_cur_time();
+    last_crash_execs = total_execs;
 
-      break;
+    break;
 
-    case FAULT_ERROR: FATAL("Unable to execute target application");
+  case FAULT_ERROR:
+    FATAL("Unable to execute target application");
 
-    default: return keeping;
-
+  default:
+    return keeping;
   }
 
   /* If we're here, we apparently want to save the crash or hang
@@ -4390,113 +4687,129 @@ keep_as_crash:
   ck_free(fn);
 
   return keeping;
-
 }
-
 
 /* When resuming, try to find the queue position to start from. This makes sense
    only when resuming, and when we can find the original fuzzer_stats. */
 
-static u32 find_start_position(void) {
+static u32 find_start_position(void)
+{
 
   static u8 tmp[4096]; /* Ought to be enough for anybody. */
 
-  u8  *fn, *off;
+  u8 *fn, *off;
   s32 fd, i;
   u32 ret;
 
-  if (!resuming_fuzz) return 0;
+  if (!resuming_fuzz)
+    return 0;
 
-  if (in_place_resume) fn = alloc_printf("%s/fuzzer_stats", out_dir);
-  else fn = alloc_printf("%s/../fuzzer_stats", in_dir);
+  if (in_place_resume)
+    fn = alloc_printf("%s/fuzzer_stats", out_dir);
+  else
+    fn = alloc_printf("%s/../fuzzer_stats", in_dir);
 
   fd = open(fn, O_RDONLY);
   ck_free(fn);
 
-  if (fd < 0) return 0;
+  if (fd < 0)
+    return 0;
 
-  i = read(fd, tmp, sizeof(tmp) - 1); (void)i; /* Ignore errors */
+  i = read(fd, tmp, sizeof(tmp) - 1);
+  (void)i; /* Ignore errors */
   close(fd);
 
   off = strstr(tmp, "cur_path          : ");
-  if (!off) return 0;
+  if (!off)
+    return 0;
 
   ret = atoi(off + 20);
-  if (ret >= queued_paths) ret = 0;
+  if (ret >= queued_paths)
+    ret = 0;
   return ret;
-
 }
-
 
 /* The same, but for timeouts. The idea is that when resuming sessions without
    -t given, we don't want to keep auto-scaling the timeout over and over
    again to prevent it from growing due to random flukes. */
 
-static void find_timeout(void) {
+static void find_timeout(void)
+{
 
   static u8 tmp[4096]; /* Ought to be enough for anybody. */
 
-  u8  *fn, *off;
+  u8 *fn, *off;
   s32 fd, i;
   u32 ret;
 
-  if (!resuming_fuzz) return;
+  if (!resuming_fuzz)
+    return;
 
-  if (in_place_resume) fn = alloc_printf("%s/fuzzer_stats", out_dir);
-  else fn = alloc_printf("%s/../fuzzer_stats", in_dir);
+  if (in_place_resume)
+    fn = alloc_printf("%s/fuzzer_stats", out_dir);
+  else
+    fn = alloc_printf("%s/../fuzzer_stats", in_dir);
 
   fd = open(fn, O_RDONLY);
   ck_free(fn);
 
-  if (fd < 0) return;
+  if (fd < 0)
+    return;
 
-  i = read(fd, tmp, sizeof(tmp) - 1); (void)i; /* Ignore errors */
+  i = read(fd, tmp, sizeof(tmp) - 1);
+  (void)i; /* Ignore errors */
   close(fd);
 
   off = strstr(tmp, "exec_timeout      : ");
-  if (!off) return;
+  if (!off)
+    return;
 
   ret = atoi(off + 20);
-  if (ret <= 4) return;
+  if (ret <= 4)
+    return;
 
   exec_tmout = ret;
   timeout_given = 3;
-
 }
-
 
 /* Update stats file for unattended monitoring. */
 
-static void write_stats_file(double bitmap_cvg, double stability, double eps) {
+static void write_stats_file(double bitmap_cvg, double stability, double eps)
+{
 
   static double last_bcvg, last_stab, last_eps;
   static struct rusage usage;
 
-  u8* fn = alloc_printf("%s/fuzzer_stats", out_dir);
+  u8 *fn = alloc_printf("%s/fuzzer_stats", out_dir);
   s32 fd;
-  FILE* f;
+  FILE *f;
 
   fd = open(fn, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 
-  if (fd < 0) PFATAL("Unable to create '%s'", fn);
+  if (fd < 0)
+    PFATAL("Unable to create '%s'", fn);
 
   ck_free(fn);
 
   f = fdopen(fd, "w");
 
-  if (!f) PFATAL("fdopen() failed");
+  if (!f)
+    PFATAL("fdopen() failed");
 
   /* Keep last values in case we're called from another context
      where exec/sec stats and such are not readily available. */
 
-  if (!bitmap_cvg && !stability && !eps) {
+  if (!bitmap_cvg && !stability && !eps)
+  {
     bitmap_cvg = last_bcvg;
-    stability  = last_stab;
-    eps        = last_eps;
-  } else {
+    stability = last_stab;
+    eps = last_eps;
+  }
+  else
+  {
     last_bcvg = bitmap_cvg;
     last_stab = stability;
-    last_eps  = eps;
+    last_eps = eps;
   }
 
   fprintf(f, "start_time        : %llu\n"
@@ -4528,30 +4841,37 @@ static void write_stats_file(double bitmap_cvg, double stability, double eps) {
              "target_mode       : %s%s%s%s%s%s%s\n"
              "command_line      : %s\n"
              "slowest_exec_ms   : %llu\n",
-             start_time / 1000, get_cur_time() / 1000, getpid(),
-             queue_cycle ? (queue_cycle - 1) : 0, total_execs, eps,
-             queued_paths, queued_favored, queued_discovered, queued_imported,
-             max_depth, current_entry, pending_favored, pending_not_fuzzed,
-             queued_variable, stability, bitmap_cvg, unique_crashes,
-             unique_hangs, last_path_time / 1000, last_crash_time / 1000,
-             last_hang_time / 1000, total_execs - last_crash_execs,
-             exec_tmout, use_banner,
-             qemu_mode ? "qemu " : "", dumb_mode ? " dumb " : "",
-             no_forkserver ? "no_forksrv " : "", crash_mode ? "crash " : "",
-             persistent_mode ? "persistent " : "", deferred_mode ? "deferred " : "",
-             (qemu_mode || dumb_mode || no_forkserver || crash_mode ||
-              persistent_mode || deferred_mode) ? "" : "default",
-             orig_cmdline, slowest_exec_ms);
-             /* ignore errors */
+          start_time / 1000, get_cur_time() / 1000, getpid(),
+          queue_cycle ? (queue_cycle - 1) : 0, total_execs, eps,
+          queued_paths, queued_favored, queued_discovered, queued_imported,
+          max_depth, current_entry, pending_favored, pending_not_fuzzed,
+          queued_variable, stability, bitmap_cvg, unique_crashes,
+          unique_hangs, last_path_time / 1000, last_crash_time / 1000,
+          last_hang_time / 1000, total_execs - last_crash_execs,
+          exec_tmout, use_banner,
+          qemu_mode ? "qemu " : "", dumb_mode ? " dumb " : "",
+          no_forkserver ? "no_forksrv " : "", crash_mode ? "crash " : "",
+          persistent_mode ? "persistent " : "", deferred_mode ? "deferred " : "",
+          (qemu_mode || dumb_mode || no_forkserver || crash_mode ||
+           persistent_mode || deferred_mode)
+              ? ""
+              : "default",
+          orig_cmdline, slowest_exec_ms);
+  /* ignore errors */
 
   /* Get rss value from the children
      We must have killed the forkserver process and called waitpid
      before calling getrusage */
-  if (getrusage(RUSAGE_CHILDREN, &usage)) {
-      WARNF("getrusage failed");
-  } else if (usage.ru_maxrss == 0) {
+  if (getrusage(RUSAGE_CHILDREN, &usage))
+  {
+    WARNF("getrusage failed");
+  }
+  else if (usage.ru_maxrss == 0)
+  {
     fprintf(f, "peak_rss_mb       : not available while afl is running\n");
-  } else {
+  }
+  else
+  {
 #ifdef __APPLE__
     fprintf(f, "peak_rss_mb       : %zu\n", usage.ru_maxrss >> 20);
 #else
@@ -4560,13 +4880,12 @@ static void write_stats_file(double bitmap_cvg, double stability, double eps) {
   }
 
   fclose(f);
-
 }
-
 
 /* Update the plot file if there is a reason to. */
 
-static void maybe_update_plot_file(double bitmap_cvg, double eps) {
+static void maybe_update_plot_file(double bitmap_cvg, double eps)
+{
 
   static u32 prev_qp, prev_pf, prev_pnf, prev_ce, prev_md, prev_nodes, prev_edges;
   static u64 prev_qc, prev_uc, prev_uh;
@@ -4578,16 +4897,17 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
       prev_pnf == pending_not_fuzzed && prev_ce == current_entry &&
       prev_qc == queue_cycle && prev_uc == unique_crashes &&
       prev_uh == unique_hangs && prev_md == max_depth &&
-      prev_nodes == cur_nodes && prev_edges == cur_edges) return;
+      prev_nodes == cur_nodes && prev_edges == cur_edges)
+    return;
 
-  prev_qp  = queued_paths;
-  prev_pf  = pending_favored;
+  prev_qp = queued_paths;
+  prev_pf = pending_favored;
   prev_pnf = pending_not_fuzzed;
-  prev_ce  = current_entry;
-  prev_qc  = queue_cycle;
-  prev_uc  = unique_crashes;
-  prev_uh  = unique_hangs;
-  prev_md  = max_depth;
+  prev_ce = current_entry;
+  prev_qc = queue_cycle;
+  prev_uc = unique_crashes;
+  prev_uh = unique_hangs;
+  prev_md = max_depth;
   prev_nodes = cur_nodes;
   prev_edges = cur_edges;
 
@@ -4604,56 +4924,56 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
           unique_hangs, max_depth, eps, prev_nodes, prev_edges); /* ignore errors */
 
   fflush(plot_file);
-
 }
-
-
 
 /* A helper function for maybe_delete_out_dir(), deleting all prefixed
    files in a directory. */
 
-static u8 delete_files(u8* path, u8* prefix) {
+static u8 delete_files(u8 *path, u8 *prefix)
+{
 
-  DIR* d;
-  struct dirent* d_ent;
+  DIR *d;
+  struct dirent *d_ent;
 
   d = opendir(path);
 
-  if (!d) return 0;
+  if (!d)
+    return 0;
 
-  while ((d_ent = readdir(d))) {
+  while ((d_ent = readdir(d)))
+  {
 
     if (d_ent->d_name[0] != '.' && (!prefix ||
-        !strncmp(d_ent->d_name, prefix, strlen(prefix)))) {
+                                    !strncmp(d_ent->d_name, prefix, strlen(prefix))))
+    {
 
-      u8* fname = alloc_printf("%s/%s", path, d_ent->d_name);
-      if (unlink(fname)) PFATAL("Unable to delete '%s'", fname);
+      u8 *fname = alloc_printf("%s/%s", path, d_ent->d_name);
+      if (unlink(fname))
+        PFATAL("Unable to delete '%s'", fname);
       ck_free(fname);
-
     }
-
   }
 
   closedir(d);
 
   return !!rmdir(path);
-
 }
-
 
 /* Get the number of runnable processes, with some simple smoothing. */
 
-static double get_runnable_processes(void) {
+static double get_runnable_processes(void)
+{
 
   static double res;
 
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined (__OpenBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
 
   /* I don't see any portable sysctl or so that would quickly give us the
      number of runnable processes; the 1-minute load average can be a
      semi-decent approximation, though. */
 
-  if (getloadavg(&res, 1) != 1) return 0;
+  if (getloadavg(&res, 1) != 1)
+    return 0;
 
 #else
 
@@ -4661,67 +4981,75 @@ static double get_runnable_processes(void) {
      computed in funny ways and sometimes don't reflect extremely short-lived
      processes well. */
 
-  FILE* f = fopen("/proc/stat", "r");
+  FILE *f = fopen("/proc/stat", "r");
   u8 tmp[1024];
   u32 val = 0;
 
-  if (!f) return 0;
+  if (!f)
+    return 0;
 
-  while (fgets(tmp, sizeof(tmp), f)) {
+  while (fgets(tmp, sizeof(tmp), f))
+  {
 
     if (!strncmp(tmp, "procs_running ", 14) ||
-        !strncmp(tmp, "procs_blocked ", 14)) val += atoi(tmp + 14);
-
+        !strncmp(tmp, "procs_blocked ", 14))
+      val += atoi(tmp + 14);
   }
 
   fclose(f);
 
-  if (!res) {
+  if (!res)
+  {
 
     res = val;
-
-  } else {
+  }
+  else
+  {
 
     res = res * (1.0 - 1.0 / AVG_SMOOTHING) +
           ((double)val) * (1.0 / AVG_SMOOTHING);
-
   }
 
 #endif /* ^(__APPLE__ || __FreeBSD__ || __OpenBSD__) */
 
   return res;
-
 }
-
 
 /* Delete the temporary directory used for in-place session resume. */
 
-static void nuke_resume_dir(void) {
+static void nuke_resume_dir(void)
+{
 
-  u8* fn;
+  u8 *fn;
 
   fn = alloc_printf("%s/_resume/.state/deterministic_done", out_dir);
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, CASE_PREFIX))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/_resume/.state/auto_extras", out_dir);
-  if (delete_files(fn, "auto_")) goto dir_cleanup_failed;
+  if (delete_files(fn, "auto_"))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/_resume/.state/redundant_edges", out_dir);
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, CASE_PREFIX))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/_resume/.state/variable_behavior", out_dir);
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, CASE_PREFIX))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/_resume/.state", out_dir);
-  if (rmdir(fn) && errno != ENOENT) goto dir_cleanup_failed;
+  if (rmdir(fn) && errno != ENOENT)
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/_resume", out_dir);
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, CASE_PREFIX))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   return;
@@ -4729,16 +5057,15 @@ static void nuke_resume_dir(void) {
 dir_cleanup_failed:
 
   FATAL("_resume directory cleanup failed");
-
 }
-
 
 /* Delete fuzzer output directory if we recognize it as ours, if the fuzzer
    is not currently running, and if the last run time isn't too great. */
 
-static void maybe_delete_out_dir(void) {
+static void maybe_delete_out_dir(void)
+{
 
-  FILE* f;
+  FILE *f;
   u8 *fn = alloc_printf("%s/fuzzer_stats", out_dir);
 
   /* See if the output directory is locked. If yes, bail out. If not,
@@ -4746,11 +5073,13 @@ static void maybe_delete_out_dir(void) {
      (this requires leaving the descriptor open).*/
 
   out_dir_fd = open(out_dir, O_RDONLY);
-  if (out_dir_fd < 0) PFATAL("Unable to open '%s'", out_dir);
+  if (out_dir_fd < 0)
+    PFATAL("Unable to open '%s'", out_dir);
 
 #ifndef __sun
 
-  if (flock(out_dir_fd, LOCK_EX | LOCK_NB) && errno == EWOULDBLOCK) {
+  if (flock(out_dir_fd, LOCK_EX | LOCK_NB) && errno == EWOULDBLOCK)
+  {
 
     SAYF("\n" cLRD "[-] " cRST
          "Looks like the job output directory is being actively used by another\n"
@@ -4759,26 +5088,28 @@ static void maybe_delete_out_dir(void) {
          sync_id ? "fuzzer ID" : "output location");
 
     FATAL("Directory '%s' is in use", out_dir);
-
   }
 
 #endif /* !__sun */
 
   f = fopen(fn, "r");
 
-  if (f) {
+  if (f)
+  {
 
     u64 start_time, last_update;
 
     if (fscanf(f, "start_time     : %llu\n"
-                  "last_update    : %llu\n", &start_time, &last_update) != 2)
+                  "last_update    : %llu\n",
+               &start_time, &last_update) != 2)
       FATAL("Malformed data in '%s'", fn);
 
     fclose(f);
 
     /* Let's see how much work is at stake. */
 
-    if (!in_place_resume && last_update - start_time > OUTPUT_GRACE * 60) {
+    if (!in_place_resume && last_update - start_time > OUTPUT_GRACE * 60)
+    {
 
       SAYF("\n" cLRD "[-] " cRST
            "The job output directory already exists and contains the results of more\n"
@@ -4788,12 +5119,11 @@ static void maybe_delete_out_dir(void) {
            "    If you wish to start a new session, remove or rename the directory manually,\n"
            "    or specify a different output location for this job. To resume the old\n"
            "    session, put '-' as the input directory in the command line ('-i -') and\n"
-           "    try again.\n", OUTPUT_GRACE);
+           "    try again.\n",
+           OUTPUT_GRACE);
 
-       FATAL("At-risk data found in '%s'", out_dir);
-
+      FATAL("At-risk data found in '%s'", out_dir);
     }
-
   }
 
   ck_free(fn);
@@ -4804,9 +5134,10 @@ static void maybe_delete_out_dir(void) {
      incomplete due to an earlier abort, so we want to use the old _resume/
      dir instead, and we let rename() fail silently. */
 
-  if (in_place_resume) {
+  if (in_place_resume)
+  {
 
-    u8* orig_q = alloc_printf("%s/queue", out_dir);
+    u8 *orig_q = alloc_printf("%s/queue", out_dir);
 
     in_dir = alloc_printf("%s/_resume", out_dir);
 
@@ -4815,11 +5146,11 @@ static void maybe_delete_out_dir(void) {
     OKF("Output directory exists, will attempt session resume.");
 
     ck_free(orig_q);
-
-  } else {
+  }
+  else
+  {
 
     OKF("Output directory exists but deemed OK to reuse.");
-
   }
 
   ACTF("Deleting old session data...");
@@ -4827,51 +5158,58 @@ static void maybe_delete_out_dir(void) {
   /* Okay, let's get the ball rolling! First, we need to get rid of the entries
      in <out_dir>/.synced/.../id:*, if any are present. */
 
-  if (!in_place_resume) {
+  if (!in_place_resume)
+  {
 
     fn = alloc_printf("%s/.synced", out_dir);
-    if (delete_files(fn, NULL)) goto dir_cleanup_failed;
+    if (delete_files(fn, NULL))
+      goto dir_cleanup_failed;
     ck_free(fn);
-
   }
 
   /* Next, we need to clean up <out_dir>/queue/.state/ subdirectories: */
 
   fn = alloc_printf("%s/queue/.state/deterministic_done", out_dir);
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, CASE_PREFIX))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/queue/.state/auto_extras", out_dir);
-  if (delete_files(fn, "auto_")) goto dir_cleanup_failed;
+  if (delete_files(fn, "auto_"))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/queue/.state/redundant_edges", out_dir);
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, CASE_PREFIX))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/queue/.state/variable_behavior", out_dir);
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, CASE_PREFIX))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   /* Then, get rid of the .state subdirectory itself (should be empty by now)
      and everything matching <out_dir>/queue/id:*. */
 
   fn = alloc_printf("%s/queue/.state", out_dir);
-  if (rmdir(fn) && errno != ENOENT) goto dir_cleanup_failed;
+  if (rmdir(fn) && errno != ENOENT)
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/queue", out_dir);
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, CASE_PREFIX))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   /* All right, let's do <out_dir>/replayable-crashes/id:* and <out_dir>/replayable-hangs/id:*. */
 
-  if (!in_place_resume) {
+  if (!in_place_resume)
+  {
 
     fn = alloc_printf("%s/replayable-crashes/README.txt", out_dir);
     unlink(fn); /* Ignore errors */
     ck_free(fn);
-
   }
 
   fn = alloc_printf("%s/replayable-crashes", out_dir);
@@ -4879,20 +5217,21 @@ static void maybe_delete_out_dir(void) {
   /* Make backup of the crashes directory if it's not empty and if we're
      doing in-place resume. */
 
-  if (in_place_resume && rmdir(fn)) {
+  if (in_place_resume && rmdir(fn))
+  {
 
     time_t cur_t = time(0);
-    struct tm* t = localtime(&cur_t);
+    struct tm *t = localtime(&cur_t);
 
 #ifndef SIMPLE_FILES
 
-    u8* nfn = alloc_printf("%s.%04u-%02u-%02u-%02u:%02u:%02u", fn,
+    u8 *nfn = alloc_printf("%s.%04u-%02u-%02u-%02u:%02u:%02u", fn,
                            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
                            t->tm_hour, t->tm_min, t->tm_sec);
 
 #else
 
-    u8* nfn = alloc_printf("%s_%04u%02u%02u%02u%02u%02u", fn,
+    u8 *nfn = alloc_printf("%s_%04u%02u%02u%02u%02u%02u", fn,
                            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
                            t->tm_hour, t->tm_min, t->tm_sec);
 
@@ -4900,30 +5239,31 @@ static void maybe_delete_out_dir(void) {
 
     rename(fn, nfn); /* Ignore errors. */
     ck_free(nfn);
-
   }
 
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, CASE_PREFIX))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/replayable-hangs", out_dir);
 
   /* Backup hangs, too. */
 
-  if (in_place_resume && rmdir(fn)) {
+  if (in_place_resume && rmdir(fn))
+  {
 
     time_t cur_t = time(0);
-    struct tm* t = localtime(&cur_t);
+    struct tm *t = localtime(&cur_t);
 
 #ifndef SIMPLE_FILES
 
-    u8* nfn = alloc_printf("%s.%04u-%02u-%02u-%02u:%02u:%02u", fn,
+    u8 *nfn = alloc_printf("%s.%04u-%02u-%02u-%02u:%02u:%02u", fn,
                            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
                            t->tm_hour, t->tm_min, t->tm_sec);
 
 #else
 
-    u8* nfn = alloc_printf("%s_%04u%02u%02u%02u%02u%02u", fn,
+    u8 *nfn = alloc_printf("%s_%04u%02u%02u%02u%02u%02u", fn,
                            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
                            t->tm_hour, t->tm_min, t->tm_sec);
 
@@ -4931,52 +5271,61 @@ static void maybe_delete_out_dir(void) {
 
     rename(fn, nfn); /* Ignore errors. */
     ck_free(nfn);
-
   }
 
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, CASE_PREFIX))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   /* Delete regions. */
 
   fn = alloc_printf("%s/regions", out_dir);
-  if (delete_files(fn, "")) goto dir_cleanup_failed;
+  if (delete_files(fn, ""))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   /* Delete replayable-queue. */
 
   fn = alloc_printf("%s/replayable-queue", out_dir);
-  if (delete_files(fn, "")) goto dir_cleanup_failed;
+  if (delete_files(fn, ""))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   /* Delete the old ipsm.dot */
   fn = alloc_printf("%s/ipsm.dot", out_dir);
-  if (unlink(fn) && errno != ENOENT) goto dir_cleanup_failed;
+  if (unlink(fn) && errno != ENOENT)
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   /* Delete the old replayable-new-ipsm-paths folder */
   fn = alloc_printf("%s/replayable-new-ipsm-paths", out_dir);
-  if (delete_files(fn, "")) goto dir_cleanup_failed;
+  if (delete_files(fn, ""))
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   /* And now, for some finishing touches. */
 
   fn = alloc_printf("%s/.cur_input", out_dir);
-  if (unlink(fn) && errno != ENOENT) goto dir_cleanup_failed;
+  if (unlink(fn) && errno != ENOENT)
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   fn = alloc_printf("%s/fuzz_bitmap", out_dir);
-  if (unlink(fn) && errno != ENOENT) goto dir_cleanup_failed;
+  if (unlink(fn) && errno != ENOENT)
+    goto dir_cleanup_failed;
   ck_free(fn);
 
-  if (!in_place_resume) {
-    fn  = alloc_printf("%s/fuzzer_stats", out_dir);
-    if (unlink(fn) && errno != ENOENT) goto dir_cleanup_failed;
+  if (!in_place_resume)
+  {
+    fn = alloc_printf("%s/fuzzer_stats", out_dir);
+    if (unlink(fn) && errno != ENOENT)
+      goto dir_cleanup_failed;
     ck_free(fn);
   }
 
   fn = alloc_printf("%s/plot_data", out_dir);
-  if (unlink(fn) && errno != ENOENT) goto dir_cleanup_failed;
+  if (unlink(fn) && errno != ENOENT)
+    goto dir_cleanup_failed;
   ck_free(fn);
 
   OKF("Output dir cleanup successful.");
@@ -4994,20 +5343,19 @@ dir_cleanup_failed:
 
        "    %s\n\n"
        "    Please examine and manually delete the files, or specify a different\n"
-       "    output location for the tool.\n", fn);
+       "    output location for the tool.\n",
+       fn);
 
   FATAL("Output directory cleanup failed");
-
 }
 
-
 static void check_term_size(void);
-
 
 /* A spiffy retro stats screen! This is called every stats_update_freq
    execve() calls, plus in several other circumstances. */
 
-static void show_stats(void) {
+static void show_stats(void)
+{
 
   static u64 last_stats_ms, last_plot_ms, last_ms, last_execs;
   static double avg_exec;
@@ -5017,25 +5365,29 @@ static void show_stats(void) {
   u32 t_bytes, t_bits;
 
   u32 banner_len, banner_pad;
-  u8  tmp[256];
+  u8 tmp[256];
 
   cur_ms = get_cur_time();
 
   /* If not enough time has passed since last UI update, bail out. */
 
-  if (cur_ms - last_ms < 1000 / UI_TARGET_HZ) return;
+  if (cur_ms - last_ms < 1000 / UI_TARGET_HZ)
+    return;
 
   /* Check if we're past the 10 minute mark. */
 
-  if (cur_ms - start_time > 10 * 60 * 1000) run_over10m = 1;
+  if (cur_ms - start_time > 10 * 60 * 1000)
+    run_over10m = 1;
 
   /* Calculate smoothed exec speed stats. */
 
-  if (!last_execs) {
+  if (!last_execs)
+  {
 
     avg_exec = ((double)total_execs) * 1000 / (cur_ms - start_time);
-
-  } else {
+  }
+  else
+  {
 
     double cur_avg = ((double)(total_execs - last_execs)) * 1000 /
                      (cur_ms - last_ms);
@@ -5048,7 +5400,6 @@ static void show_stats(void) {
 
     avg_exec = avg_exec * (1.0 - 1.0 / AVG_SMOOTHING) +
                cur_avg * (1.0 / AVG_SMOOTHING);
-
   }
 
   last_ms = cur_ms;
@@ -5057,7 +5408,8 @@ static void show_stats(void) {
   /* Tell the callers when to contact us (as measured in execs). */
 
   stats_update_freq = avg_exec / (UI_TARGET_HZ * 10);
-  if (!stats_update_freq) stats_update_freq = 1;
+  if (!stats_update_freq)
+    stats_update_freq = 1;
 
   /* Do some bitmap stats. */
 
@@ -5071,34 +5423,37 @@ static void show_stats(void) {
 
   /* Roughly every minute, update fuzzer stats and save auto tokens. */
 
-  if (cur_ms - last_stats_ms > STATS_UPDATE_SEC * 1000) {
+  if (cur_ms - last_stats_ms > STATS_UPDATE_SEC * 1000)
+  {
 
     last_stats_ms = cur_ms;
     write_stats_file(t_byte_ratio, stab_ratio, avg_exec);
     save_auto();
     write_bitmap();
-
   }
 
   /* Every now and then, write plot data. */
 
-  if (cur_ms - last_plot_ms > PLOT_UPDATE_SEC * 1000) {
+  if (cur_ms - last_plot_ms > PLOT_UPDATE_SEC * 1000)
+  {
 
     last_plot_ms = cur_ms;
     maybe_update_plot_file(t_byte_ratio, avg_exec);
-
   }
 
   /* Honor AFL_EXIT_WHEN_DONE and AFL_BENCH_UNTIL_CRASH. */
 
   if (!dumb_mode && cycles_wo_finds > 100 && !pending_not_fuzzed &&
-      getenv("AFL_EXIT_WHEN_DONE")) stop_soon = 2;
+      getenv("AFL_EXIT_WHEN_DONE"))
+    stop_soon = 2;
 
-  if (total_crashes && getenv("AFL_BENCH_UNTIL_CRASH")) stop_soon = 2;
+  if (total_crashes && getenv("AFL_BENCH_UNTIL_CRASH"))
+    stop_soon = 2;
 
   /* If we're not on TTY, bail out. */
 
-  if (not_on_tty) return;
+  if (not_on_tty)
+    return;
 
   /* Compute some mildly useful bitmap stats. */
 
@@ -5106,24 +5461,24 @@ static void show_stats(void) {
 
   /* Now, for the visuals... */
 
-  if (clear_screen) {
+  if (clear_screen)
+  {
 
     SAYF(TERM_CLEAR CURSOR_HIDE);
     clear_screen = 0;
 
     check_term_size();
-
   }
 
   SAYF(TERM_HOME);
 
-  if (term_too_small) {
+  if (term_too_small)
+  {
 
     SAYF(cBRI "Your terminal is too small to display the UI.\n"
-         "Please resize terminal window to at least 80x25.\n" cRST);
+              "Please resize terminal window to at least 80x25.\n" cRST);
 
     return;
-
   }
 
   /* Let's start by drawing a centered banner. */
@@ -5132,77 +5487,82 @@ static void show_stats(void) {
   banner_pad = (80 - banner_len) / 2;
   memset(tmp, ' ', banner_pad);
 
-  sprintf(tmp + banner_pad, "%s " cLCY VERSION cLGN
-          " (%s)",  crash_mode ? cPIN "peruvian were-rabbit" :
-          cYEL "american fuzzy lop", use_banner);
+  sprintf(tmp + banner_pad, "%s " cLCY VERSION cLGN " (%s)", crash_mode ? cPIN "peruvian were-rabbit" : cYEL "american fuzzy lop", use_banner);
 
   SAYF("\n%s\n\n", tmp);
 
   /* "Handy" shortcuts for drawing boxes... */
 
-#define bSTG    bSTART cGRA
-#define bH2     bH bH
-#define bH5     bH2 bH2 bH
-#define bH10    bH5 bH5
-#define bH20    bH10 bH10
-#define bH30    bH20 bH10
-#define SP5     "     "
-#define SP10    SP5 SP5
-#define SP20    SP10 SP10
+#define bSTG bSTART cGRA
+#define bH2 bH bH
+#define bH5 bH2 bH2 bH
+#define bH10 bH5 bH5
+#define bH20 bH10 bH10
+#define bH30 bH20 bH10
+#define SP5 "     "
+#define SP10 SP5 SP5
+#define SP20 SP10 SP10
 
   /* Lord, forgive me this. */
 
   SAYF(SET_G1 bSTG bLT bH bSTOP cCYA " process timing " bSTG bH30 bH5 bH2 bHB
-       bH bSTOP cCYA " overall results " bSTG bH5 bRT "\n");
+           bH bSTOP cCYA " overall results " bSTG bH5 bRT "\n");
 
-  if (dumb_mode) {
+  if (dumb_mode)
+  {
 
     strcpy(tmp, cRST);
-
-  } else {
+  }
+  else
+  {
 
     u64 min_wo_finds = (cur_ms - last_path_time) / 1000 / 60;
 
     /* First queue cycle: don't stop now! */
-    if (queue_cycle == 1 || min_wo_finds < 15) strcpy(tmp, cMGN); else
+    if (queue_cycle == 1 || min_wo_finds < 15)
+      strcpy(tmp, cMGN);
+    else
 
-    /* Subsequent cycles, but we're still making finds. */
-    if (cycles_wo_finds < 25 || min_wo_finds < 30) strcpy(tmp, cYEL); else
+      /* Subsequent cycles, but we're still making finds. */
+      if (cycles_wo_finds < 25 || min_wo_finds < 30)
+        strcpy(tmp, cYEL);
+      else
 
-    /* No finds for a long time and no test cases to try. */
-    if (cycles_wo_finds > 100 && !pending_not_fuzzed && min_wo_finds > 120)
-      strcpy(tmp, cLGN);
+        /* No finds for a long time and no test cases to try. */
+        if (cycles_wo_finds > 100 && !pending_not_fuzzed && min_wo_finds > 120)
+          strcpy(tmp, cLGN);
 
-    /* Default: cautiously OK to stop? */
-    else strcpy(tmp, cLBL);
-
+        /* Default: cautiously OK to stop? */
+        else
+          strcpy(tmp, cLBL);
   }
 
   SAYF(bV bSTOP "        run time : " cRST "%-34s " bSTG bV bSTOP
-       "  cycles done : %s%-5s  " bSTG bV "\n",
+                "  cycles done : %s%-5s  " bSTG bV "\n",
        DTD(cur_ms, start_time), tmp, DI(queue_cycle - 1));
 
   /* We want to warn people about not seeing new paths after a full cycle,
      except when resuming fuzzing or running in non-instrumented mode. */
 
   if (!dumb_mode && (last_path_time || resuming_fuzz || queue_cycle == 1 ||
-      in_bitmap || crash_mode)) {
+                     in_bitmap || crash_mode))
+  {
 
     SAYF(bV bSTOP "   last new path : " cRST "%-34s ",
          DTD(cur_ms, last_path_time));
-
-  } else {
+  }
+  else
+  {
 
     if (dumb_mode)
 
       SAYF(bV bSTOP "   last new path : " cPIN "n/a" cRST
-           " (non-instrumented mode)        ");
+                    " (non-instrumented mode)        ");
 
-     else
+    else
 
       SAYF(bV bSTOP "   last new path : " cRST "none yet " cLRD
-           "(odd, check syntax!)      ");
-
+                    "(odd, check syntax!)      ");
   }
 
   SAYF(bSTG bV bSTOP "  total paths : " cRST "%-5s  " bSTG bV "\n",
@@ -5215,19 +5575,19 @@ static void show_stats(void) {
           (unique_crashes >= KEEP_UNIQUE_CRASH) ? "+" : "");
 
   SAYF(bV bSTOP " last uniq crash : " cRST "%-34s " bSTG bV bSTOP
-       " uniq crashes : %s%-6s " bSTG bV "\n",
+                " uniq crashes : %s%-6s " bSTG bV "\n",
        DTD(cur_ms, last_crash_time), unique_crashes ? cLRD : cRST,
        tmp);
 
   sprintf(tmp, "%s%s", DI(unique_hangs),
-         (unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
+          (unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
 
   SAYF(bV bSTOP "  last uniq hang : " cRST "%-34s " bSTG bV bSTOP
-       "   uniq hangs : " cRST "%-6s " bSTG bV "\n",
+                "   uniq hangs : " cRST "%-6s " bSTG bV "\n",
        DTD(cur_ms, last_hang_time), tmp);
 
   SAYF(bVR bH bSTOP cCYA " cycle progress " bSTG bH20 bHB bH bSTOP cCYA
-       " map coverage " bSTG bH bHT bH20 bH2 bH bVL "\n");
+                         " map coverage " bSTG bH bHT bH20 bH2 bH bVL "\n");
 
   /* This gets funny because we want to print several variable-length variables
      together, but then cram them into a fixed-width field - so we need to
@@ -5239,11 +5599,9 @@ static void show_stats(void) {
 
   SAYF(bV bSTOP "  now processing : " cRST "%-17s " bSTG bV bSTOP, tmp);
 
-  sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size) *
-          100 / MAP_SIZE, t_byte_ratio);
+  sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size) * 100 / MAP_SIZE, t_byte_ratio);
 
-  SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio > 70 ? cLRD :
-       ((t_bytes < 200 && !dumb_mode) ? cPIN : cRST), tmp);
+  SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio > 70 ? cLRD : ((t_bytes < 200 && !dumb_mode) ? cPIN : cRST), tmp);
 
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
@@ -5256,7 +5614,7 @@ static void show_stats(void) {
   SAYF(bSTOP " count coverage : " cRST "%-21s " bSTG bV "\n", tmp);
 
   SAYF(bVR bH bSTOP cCYA " stage progress " bSTG bH20 bX bH bSTOP cCYA
-       " findings in depth " bSTG bH20 bVL "\n");
+                         " findings in depth " bSTG bH20 bVL "\n");
 
   sprintf(tmp, "%s (%0.02f%%)", DI(queued_favored),
           ((double)queued_favored) * 100 / queued_paths);
@@ -5264,17 +5622,19 @@ static void show_stats(void) {
   /* Yeah... it's still going on... halp? */
 
   SAYF(bV bSTOP "  now trying : " cRST "%-21s " bSTG bV bSTOP
-       " favored paths : " cRST "%-22s " bSTG bV "\n", stage_name, tmp);
+                " favored paths : " cRST "%-22s " bSTG bV "\n",
+       stage_name, tmp);
 
-  if (!stage_max) {
+  if (!stage_max)
+  {
 
     sprintf(tmp, "%s/-", DI(stage_cur));
-
-  } else {
+  }
+  else
+  {
 
     sprintf(tmp, "%s/%s (%0.02f%%)", DI(stage_cur), DI(stage_max),
             ((double)stage_cur) * 100 / stage_max);
-
   }
 
   SAYF(bV bSTOP " stage execs : " cRST "%-21s " bSTG bV bSTOP, tmp);
@@ -5287,61 +5647,64 @@ static void show_stats(void) {
   sprintf(tmp, "%s (%s%s unique)", DI(total_crashes), DI(unique_crashes),
           (unique_crashes >= KEEP_UNIQUE_CRASH) ? "+" : "");
 
-  if (crash_mode) {
+  if (crash_mode)
+  {
 
     SAYF(bV bSTOP " total execs : " cRST "%-21s " bSTG bV bSTOP
-         "   new crashes : %s%-22s " bSTG bV "\n", DI(total_execs),
+                  "   new crashes : %s%-22s " bSTG bV "\n",
+         DI(total_execs),
          unique_crashes ? cLRD : cRST, tmp);
-
-  } else {
+  }
+  else
+  {
 
     SAYF(bV bSTOP " total execs : " cRST "%-21s " bSTG bV bSTOP
-         " total crashes : %s%-22s " bSTG bV "\n", DI(total_execs),
+                  " total crashes : %s%-22s " bSTG bV "\n",
+         DI(total_execs),
          unique_crashes ? cLRD : cRST, tmp);
-
   }
 
   /* Show a warning about slow execution. */
 
-  if (avg_exec < 100) {
+  if (avg_exec < 100)
+  {
 
-    sprintf(tmp, "%s/sec (%s)", DF(avg_exec), avg_exec < 20 ?
-            "zzzz..." : "slow!");
+    sprintf(tmp, "%s/sec (%s)", DF(avg_exec), avg_exec < 20 ? "zzzz..." : "slow!");
 
     SAYF(bV bSTOP "  exec speed : " cLRD "%-21s ", tmp);
-
-  } else {
+  }
+  else
+  {
 
     sprintf(tmp, "%s/sec", DF(avg_exec));
     SAYF(bV bSTOP "  exec speed : " cRST "%-21s ", tmp);
-
   }
 
   sprintf(tmp, "%s (%s%s unique)", DI(total_tmouts), DI(unique_tmouts),
           (unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
 
-  SAYF (bSTG bV bSTOP "  total tmouts : " cRST "%-22s " bSTG bV "\n", tmp);
+  SAYF(bSTG bV bSTOP "  total tmouts : " cRST "%-22s " bSTG bV "\n", tmp);
 
   /* Aaaalmost there... hold on! */
 
   SAYF(bVR bH cCYA bSTOP " fuzzing strategy yields " bSTG bH10 bH bHT bH10
-       bH5 bHB bH bSTOP cCYA " path geometry " bSTG bH5 bH2 bH bVL "\n");
+           bH5 bHB bH bSTOP cCYA " path geometry " bSTG bH5 bH2 bH bVL "\n");
 
-  if (skip_deterministic) {
+  if (skip_deterministic)
+  {
 
     strcpy(tmp, "n/a, n/a, n/a");
-
-  } else {
+  }
+  else
+  {
 
     sprintf(tmp, "%s/%s, %s/%s, %s/%s",
             DI(stage_finds[STAGE_FLIP1]), DI(stage_cycles[STAGE_FLIP1]),
             DI(stage_finds[STAGE_FLIP2]), DI(stage_cycles[STAGE_FLIP2]),
             DI(stage_finds[STAGE_FLIP4]), DI(stage_cycles[STAGE_FLIP4]));
-
   }
 
-  SAYF(bV bSTOP "   bit flips : " cRST "%-37s " bSTG bV bSTOP "    levels : "
-       cRST "%-10s " bSTG bV "\n", tmp, DI(max_depth));
+  SAYF(bV bSTOP "   bit flips : " cRST "%-37s " bSTG bV bSTOP "    levels : " cRST "%-10s " bSTG bV "\n", tmp, DI(max_depth));
 
   if (!skip_deterministic)
     sprintf(tmp, "%s/%s, %s/%s, %s/%s",
@@ -5349,8 +5712,7 @@ static void show_stats(void) {
             DI(stage_finds[STAGE_FLIP16]), DI(stage_cycles[STAGE_FLIP16]),
             DI(stage_finds[STAGE_FLIP32]), DI(stage_cycles[STAGE_FLIP32]));
 
-  SAYF(bV bSTOP "  byte flips : " cRST "%-37s " bSTG bV bSTOP "   pending : "
-       cRST "%-10s " bSTG bV "\n", tmp, DI(pending_not_fuzzed));
+  SAYF(bV bSTOP "  byte flips : " cRST "%-37s " bSTG bV bSTOP "   pending : " cRST "%-10s " bSTG bV "\n", tmp, DI(pending_not_fuzzed));
 
   if (!skip_deterministic)
     sprintf(tmp, "%s/%s, %s/%s, %s/%s",
@@ -5358,8 +5720,7 @@ static void show_stats(void) {
             DI(stage_finds[STAGE_ARITH16]), DI(stage_cycles[STAGE_ARITH16]),
             DI(stage_finds[STAGE_ARITH32]), DI(stage_cycles[STAGE_ARITH32]));
 
-  SAYF(bV bSTOP " arithmetics : " cRST "%-37s " bSTG bV bSTOP "  pend fav : "
-       cRST "%-10s " bSTG bV "\n", tmp, DI(pending_favored));
+  SAYF(bV bSTOP " arithmetics : " cRST "%-37s " bSTG bV bSTOP "  pend fav : " cRST "%-10s " bSTG bV "\n", tmp, DI(pending_favored));
 
   if (!skip_deterministic)
     sprintf(tmp, "%s/%s, %s/%s, %s/%s",
@@ -5367,8 +5728,7 @@ static void show_stats(void) {
             DI(stage_finds[STAGE_INTEREST16]), DI(stage_cycles[STAGE_INTEREST16]),
             DI(stage_finds[STAGE_INTEREST32]), DI(stage_cycles[STAGE_INTEREST32]));
 
-  SAYF(bV bSTOP "  known ints : " cRST "%-37s " bSTG bV bSTOP " own finds : "
-       cRST "%-10s " bSTG bV "\n", tmp, DI(queued_discovered));
+  SAYF(bV bSTOP "  known ints : " cRST "%-37s " bSTG bV bSTOP " own finds : " cRST "%-10s " bSTG bV "\n", tmp, DI(queued_discovered));
 
   if (!skip_deterministic)
     sprintf(tmp, "%s/%s, %s/%s, %s/%s",
@@ -5377,8 +5737,9 @@ static void show_stats(void) {
             DI(stage_finds[STAGE_EXTRAS_AO]), DI(stage_cycles[STAGE_EXTRAS_AO]));
 
   SAYF(bV bSTOP "  dictionary : " cRST "%-37s " bSTG bV bSTOP
-       "  imported : " cRST "%-10s " bSTG bV "\n", tmp,
-       sync_id ? DI(queued_imported) : (u8*)"n/a");
+                "  imported : " cRST "%-10s " bSTG bV "\n",
+       tmp,
+       sync_id ? DI(queued_imported) : (u8 *)"n/a");
 
   sprintf(tmp, "%s/%s, %s/%s",
           DI(stage_finds[STAGE_HAVOC]), DI(stage_cycles[STAGE_HAVOC]),
@@ -5386,55 +5747,57 @@ static void show_stats(void) {
 
   SAYF(bV bSTOP "       havoc : " cRST "%-37s " bSTG bV bSTOP, tmp);
 
-  if (t_bytes) sprintf(tmp, "%0.02f%%", stab_ratio);
-    else strcpy(tmp, "n/a");
+  if (t_bytes)
+    sprintf(tmp, "%0.02f%%", stab_ratio);
+  else
+    strcpy(tmp, "n/a");
 
-  SAYF(" stability : %s%-10s " bSTG bV "\n", (stab_ratio < 85 && var_byte_count > 40)
-       ? cLRD : ((queued_variable && (!persistent_mode || var_byte_count > 20))
-       ? cMGN : cRST), tmp);
+  SAYF(" stability : %s%-10s " bSTG bV "\n", (stab_ratio < 85 && var_byte_count > 40) ? cLRD : ((queued_variable && (!persistent_mode || var_byte_count > 20)) ? cMGN : cRST), tmp);
 
-  if (!bytes_trim_out) {
+  if (!bytes_trim_out)
+  {
 
     sprintf(tmp, "n/a, ");
-
-  } else {
+  }
+  else
+  {
 
     sprintf(tmp, "%0.02f%%/%s, ",
             ((double)(bytes_trim_in - bytes_trim_out)) * 100 / bytes_trim_in,
             DI(trim_execs));
-
   }
 
-  if (!blocks_eff_total) {
+  if (!blocks_eff_total)
+  {
 
     u8 tmp2[128];
 
     sprintf(tmp2, "n/a");
     strcat(tmp, tmp2);
-
-  } else {
+  }
+  else
+  {
 
     u8 tmp2[128];
 
     sprintf(tmp2, "%0.02f%%",
             ((double)(blocks_eff_total - blocks_eff_select)) * 100 /
-            blocks_eff_total);
+                blocks_eff_total);
 
     strcat(tmp, tmp2);
-
   }
 
-  SAYF(bV bSTOP "        trim : " cRST "%-37s " bSTG bVR bH20 bH2 bH2 bRB "\n"
-       bLB bH30 bH20 bH2 bH bRB bSTOP cRST RESET_G1, tmp);
+  SAYF(bV bSTOP "        trim : " cRST "%-37s " bSTG bVR bH20 bH2 bH2 bRB "\n" bLB bH30 bH20 bH2 bH bRB bSTOP cRST RESET_G1, tmp);
 
   /* Provide some CPU utilization stats. */
 
-  if (cpu_core_count) {
+  if (cpu_core_count)
+  {
 
     double cur_runnable = get_runnable_processes();
     u32 cur_utilization = cur_runnable * 100 / cpu_core_count;
 
-    u8* cpu_color = cCYA;
+    u8 *cpu_color = cCYA;
 
     /* If we could still run one or more processes, use green. */
 
@@ -5443,22 +5806,24 @@ static void show_stats(void) {
 
     /* If we're clearly oversubscribed, use red. */
 
-    if (!no_cpu_meter_red && cur_utilization >= 150) cpu_color = cLRD;
+    if (!no_cpu_meter_red && cur_utilization >= 150)
+      cpu_color = cLRD;
 
 #ifdef HAVE_AFFINITY
 
-    if (cpu_aff >= 0) {
+    if (cpu_aff >= 0)
+    {
 
       SAYF(SP10 cGRA "[cpu%03u:%s%3u%%" cGRA "]\r" cRST,
            MIN(cpu_aff, 999), cpu_color,
            MIN(cur_utilization, 999));
-
-    } else {
+    }
+    else
+    {
 
       SAYF(SP10 cGRA "   [cpu:%s%3u%%" cGRA "]\r" cRST,
            cpu_color, MIN(cur_utilization, 999));
-
-   }
+    }
 
 #else
 
@@ -5466,26 +5831,31 @@ static void show_stats(void) {
          cpu_color, MIN(cur_utilization, 999));
 
 #endif /* ^HAVE_AFFINITY */
-
-  } else SAYF("\r");
+  }
+  else
+    SAYF("\r");
 
   /* Show debugging stats for AFLNet only when AFLNET_DEBUG environment variable is set */
-  if (getenv("AFLNET_DEBUG") && (atoi(getenv("AFLNET_DEBUG")) == 1) && state_aware_mode) {
+  if (getenv("AFLNET_DEBUG") && (atoi(getenv("AFLNET_DEBUG")) == 1) && state_aware_mode)
+  {
     SAYF(cRST "\n\nMax_seed_region_count: %-4s, current_kl_messages_size: %-4s\n\n", DI(max_seed_region_count), DI(kl_messages->size));
-    SAYF(cRST "State IDs and its #selected_times,"cCYA  "#fuzzs,"cLRD "#discovered_paths,"cGRA "#excersing_paths:\n");
+    SAYF(cRST "State IDs and its #selected_times," cCYA "#fuzzs," cLRD "#discovered_paths," cGRA "#excersing_paths:\n");
 
     khint_t k;
     state_info_t *state;
     u32 i = 0;
 
-    for(i = 0; i < state_ids_count; i++) {
+    for (i = 0; i < state_ids_count; i++)
+    {
       u32 state_id = state_ids[i];
 
       k = kh_get(hms, khms_states, state_id);
-      if (k != kh_end(khms_states)) {
+      if (k != kh_end(khms_states))
+      {
         state = kh_val(khms_states, k);
-        SAYF(cRST "S%-3s:%-4s,"cCYA "%-5s,"cLRD "%-5s,"cGRA "%-5s",  DI(state->id), DI(state->selected_times), DI(state->fuzzs), DI(state->paths_discovered), DI(state->paths));
-        if ((i + 1) % 3 == 0) SAYF("\n");
+        SAYF(cRST "S%-3s:%-4s," cCYA "%-5s," cLRD "%-5s," cGRA "%-5s", DI(state->id), DI(state->selected_times), DI(state->fuzzs), DI(state->paths_discovered), DI(state->paths));
+        if ((i + 1) % 3 == 0)
+          SAYF("\n");
       }
     }
   }
@@ -5493,36 +5863,41 @@ static void show_stats(void) {
   /* Hallelujah! */
 
   fflush(0);
-
 }
-
 
 /* Display quick statistics at the end of processing the input directory,
    plus a bunch of warnings. Some calibration stuff also ended up here,
    along with several hardcoded constants. Maybe clean up eventually. */
 
-static void show_init_stats(void) {
+static void show_init_stats(void)
+{
 
-  struct queue_entry* q = queue;
+  struct queue_entry *q = queue;
   u32 min_bits = 0, max_bits = 0;
   u64 min_us = 0, max_us = 0;
   u64 avg_us = 0;
   u32 max_len = 0;
 
-  if (total_cal_cycles) avg_us = total_cal_us / total_cal_cycles;
+  if (total_cal_cycles)
+    avg_us = total_cal_us / total_cal_cycles;
 
-  while (q) {
+  while (q)
+  {
 
-    if (!min_us || q->exec_us < min_us) min_us = q->exec_us;
-    if (q->exec_us > max_us) max_us = q->exec_us;
+    if (!min_us || q->exec_us < min_us)
+      min_us = q->exec_us;
+    if (q->exec_us > max_us)
+      max_us = q->exec_us;
 
-    if (!min_bits || q->bitmap_size < min_bits) min_bits = q->bitmap_size;
-    if (q->bitmap_size > max_bits) max_bits = q->bitmap_size;
+    if (!min_bits || q->bitmap_size < min_bits)
+      min_bits = q->bitmap_size;
+    if (q->bitmap_size > max_bits)
+      max_bits = q->bitmap_size;
 
-    if (q->len > max_len) max_len = q->len;
+    if (q->len > max_len)
+      max_len = q->len;
 
     q = q->next;
-
   }
 
   SAYF("\n");
@@ -5533,11 +5908,15 @@ static void show_init_stats(void) {
 
   /* Let's keep things moving with slow binaries. */
 
-  if (avg_us > 50000) havoc_div = 10;     /* 0-19 execs/sec   */
-  else if (avg_us > 20000) havoc_div = 5; /* 20-49 execs/sec  */
-  else if (avg_us > 10000) havoc_div = 2; /* 50-100 execs/sec */
+  if (avg_us > 50000)
+    havoc_div = 10; /* 0-19 execs/sec   */
+  else if (avg_us > 20000)
+    havoc_div = 5; /* 20-49 execs/sec  */
+  else if (avg_us > 10000)
+    havoc_div = 2; /* 50-100 execs/sec */
 
-  if (!resuming_fuzz) {
+  if (!resuming_fuzz)
+  {
 
     if (max_len > 50 * 1024)
       WARNF(cLRD "Some test cases are huge (%s) - see %s/perf_tips.txt!",
@@ -5553,19 +5932,17 @@ static void show_init_stats(void) {
       WARNF(cLRD "You probably have far too many input files! Consider trimming down.");
     else if (queued_paths > 20)
       WARNF("You have lots of input files; try starting small.");
-
   }
 
   OKF("Here are some useful stats:\n\n"
 
-      cGRA "    Test case count : " cRST "%u favored, %u variable, %u total\n"
-      cGRA "       Bitmap range : " cRST "%u to %u bits (average: %0.02f bits)\n"
-      cGRA "        Exec timing : " cRST "%s to %s us (average: %s us)\n",
+      cGRA "    Test case count : " cRST "%u favored, %u variable, %u total\n" cGRA "       Bitmap range : " cRST "%u to %u bits (average: %0.02f bits)\n" cGRA "        Exec timing : " cRST "%s to %s us (average: %s us)\n",
       queued_favored, queued_variable, queued_paths, min_bits, max_bits,
       ((double)total_bitmap_size) / (total_bitmap_entries ? total_bitmap_entries : 1),
       DI(min_us), DI(max_us), DI(avg_us));
 
-  if (!timeout_given) {
+  if (!timeout_given)
+  {
 
     /* Figure out the appropriate timeout. The basic idea is: 5x average or
        1x max, rounded up to EXEC_TM_ROUND ms and capped at 1 second.
@@ -5574,24 +5951,28 @@ static void show_init_stats(void) {
        random scheduler jitter is less likely to have any impact, and because
        our patience is wearing thin =) */
 
-    if (avg_us > 50000) exec_tmout = avg_us * 2 / 1000;
-    else if (avg_us > 10000) exec_tmout = avg_us * 3 / 1000;
-    else exec_tmout = avg_us * 5 / 1000;
+    if (avg_us > 50000)
+      exec_tmout = avg_us * 2 / 1000;
+    else if (avg_us > 10000)
+      exec_tmout = avg_us * 3 / 1000;
+    else
+      exec_tmout = avg_us * 5 / 1000;
 
     exec_tmout = MAX(exec_tmout, max_us / 1000);
     exec_tmout = (exec_tmout + EXEC_TM_ROUND) / EXEC_TM_ROUND * EXEC_TM_ROUND;
 
-    if (exec_tmout > EXEC_TIMEOUT) exec_tmout = EXEC_TIMEOUT;
+    if (exec_tmout > EXEC_TIMEOUT)
+      exec_tmout = EXEC_TIMEOUT;
 
     ACTF("No -t option specified, so I'll use exec timeout of %u ms.",
          exec_tmout);
 
     timeout_given = 1;
-
-  } else if (timeout_given == 3) {
+  }
+  else if (timeout_given == 3)
+  {
 
     ACTF("Applying timeout settings from resumed session (%u ms).", exec_tmout);
-
   }
 
   /* In dumb mode, re-running every timing out test case with a generous time
@@ -5601,22 +5982,23 @@ static void show_init_stats(void) {
     hang_tmout = MIN(EXEC_TIMEOUT, exec_tmout * 2 + 100);
 
   OKF("All set and ready to roll!");
-
 }
 
 /* Write a modified test case, run program, process results. Handle
    error conditions, returning 1 if it's time to bail out. This is
    a helper function for fuzz_one(). */
 
-EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
+EXP_ST u8 common_fuzz_stuff(char **argv, u8 *out_buf, u32 len)
+{
 
   u8 fault;
 
-  if (post_handler) {
+  if (post_handler)
+  {
 
     out_buf = post_handler(out_buf, &len);
-    if (!out_buf || !len) return 0;
-
+    if (!out_buf || !len)
+      return 0;
   }
 
   write_to_testcase(out_buf, len);
@@ -5626,41 +6008,49 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
   // parse the out_buf into messages
   u32 region_count = 0;
   region_t *regions = (*extract_requests)(out_buf, len, &region_count);
-  if (!region_count) PFATAL("AFLNet Region count cannot be Zero");
+  if (!region_count)
+    PFATAL("AFLNet Region count cannot be Zero");
 
   // update kl_messages linked list
   u32 i;
-  kliter_t(lms) *prev_last_message, *cur_last_message;
+  kliter_t(lms) * prev_last_message, *cur_last_message;
   prev_last_message = get_last_message(kl_messages);
 
   // limit the #messages based on max_seed_region_count to reduce overhead
-  for (i = 0; i < region_count; i++) {
+  for (i = 0; i < region_count; i++)
+  {
     u32 len;
-    //Identify region size
-    if (i == max_seed_region_count) {
+    // Identify region size
+    if (i == max_seed_region_count)
+    {
       len = regions[region_count - 1].end_byte - regions[i].start_byte + 1;
-    } else {
+    }
+    else
+    {
       len = regions[i].end_byte - regions[i].start_byte + 1;
     }
 
-    //Create a new message
-    message_t *m = (message_t *) ck_alloc(sizeof(message_t));
-    m->mdata = (char *) ck_alloc(len);
+    // Create a new message
+    message_t *m = (message_t *)ck_alloc(sizeof(message_t));
+    m->mdata = (char *)ck_alloc(len);
     m->msize = len;
-    if (m->mdata == NULL) PFATAL("Unable to allocate memory region to store new message");
+    if (m->mdata == NULL)
+      PFATAL("Unable to allocate memory region to store new message");
     memcpy(m->mdata, &out_buf[regions[i].start_byte], len);
 
-    //Insert the message to the linked list
+    // Insert the message to the linked list
     *kl_pushp(lms, kl_messages) = m;
 
-    //Update M2_next in case it points to the tail (M3 is empty)
-    //because the tail in klist is updated once a new entry is pushed into it
-    //in fact, the old tail storage is used to store the newly added entry and a new tail is created
-    if (M2_next->next == kl_end(kl_messages)) {
+    // Update M2_next in case it points to the tail (M3 is empty)
+    // because the tail in klist is updated once a new entry is pushed into it
+    // in fact, the old tail storage is used to store the newly added entry and a new tail is created
+    if (M2_next->next == kl_end(kl_messages))
+    {
       M2_next = kl_end(kl_messages);
     }
 
-    if (i == max_seed_region_count) break;
+    if (i == max_seed_region_count)
+      break;
   }
   ck_free(regions);
 
@@ -5668,14 +6058,17 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
 
   // update the linked list with the new M2 & free the previous M2
 
-  //detach the head of previous M2 from the list
-  kliter_t(lms) *old_M2_start;
-  if (M2_prev == NULL) {
+  // detach the head of previous M2 from the list
+  kliter_t(lms) * old_M2_start;
+  if (M2_prev == NULL)
+  {
     old_M2_start = kl_begin(kl_messages);
     kl_begin(kl_messages) = kl_next(prev_last_message);
     kl_next(cur_last_message) = M2_next;
     kl_next(prev_last_message) = kl_end(kl_messages);
-  } else {
+  }
+  else
+  {
     old_M2_start = kl_next(M2_prev);
     kl_next(M2_prev) = kl_next(prev_last_message);
     kl_next(cur_last_message) = M2_next;
@@ -5683,10 +6076,11 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
   }
 
   // free the previous M2
-  kliter_t(lms) *cur_it, *next_it;
+  kliter_t(lms) * cur_it, *next_it;
   cur_it = old_M2_start;
   next_it = kl_next(cur_it);
-  do {
+  do
+  {
     ck_free(kl_val(cur_it)->mdata);
     ck_free(kl_val(cur_it));
     kmp_free(lms, kl_messages->mp, cur_it);
@@ -5694,35 +6088,40 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
 
     cur_it = next_it;
     next_it = kl_next(next_it);
-  } while(cur_it != M2_next);
+  } while (cur_it != M2_next);
 
   /* End of AFLNet code */
 
   fault = run_target(argv, exec_tmout);
 
-  //Update fuzz count, no matter whether the generated test is interesting or not
-  if (state_aware_mode) update_fuzzs();
+  // Update fuzz count, no matter whether the generated test is interesting or not
+  if (state_aware_mode)
+    update_fuzzs();
 
-  if (stop_soon) return 1;
+  if (stop_soon)
+    return 1;
 
-  if (fault == FAULT_TMOUT) {
+  if (fault == FAULT_TMOUT)
+  {
 
-    if (subseq_tmouts++ > TMOUT_LIMIT) {
+    if (subseq_tmouts++ > TMOUT_LIMIT)
+    {
       cur_skipped_paths++;
       return 1;
     }
-
-  } else subseq_tmouts = 0;
+  }
+  else
+    subseq_tmouts = 0;
 
   /* Users can hit us with SIGUSR1 to request the current input
      to be abandoned. */
 
-  if (skip_requested) {
+  if (skip_requested)
+  {
 
-     skip_requested = 0;
-     cur_skipped_paths++;
-     return 1;
-
+    skip_requested = 0;
+    cur_skipped_paths++;
+    return 1;
   }
 
   /* This handles FAULT_ERROR for us: */
@@ -5733,58 +6132,61 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
     show_stats();
 
   return 0;
-
 }
-
 
 /* Helper to choose random block len for block operations in fuzz_one().
    Doesn't return zero, provided that max_len is > 0. */
 
-static u32 choose_block_len(u32 limit) {
+static u32 choose_block_len(u32 limit)
+{
 
   u32 min_value, max_value;
   u32 rlim = MIN(queue_cycle, 3);
 
-  if (!run_over10m) rlim = 1;
+  if (!run_over10m)
+    rlim = 1;
 
-  switch (UR(rlim)) {
+  switch (UR(rlim))
+  {
 
-    case 0:  min_value = 1;
-             max_value = HAVOC_BLK_SMALL;
-             break;
+  case 0:
+    min_value = 1;
+    max_value = HAVOC_BLK_SMALL;
+    break;
 
-    case 1:  min_value = HAVOC_BLK_SMALL;
-             max_value = HAVOC_BLK_MEDIUM;
-             break;
+  case 1:
+    min_value = HAVOC_BLK_SMALL;
+    max_value = HAVOC_BLK_MEDIUM;
+    break;
 
-    default:
+  default:
 
-             if (UR(10)) {
+    if (UR(10))
+    {
 
-               min_value = HAVOC_BLK_MEDIUM;
-               max_value = HAVOC_BLK_LARGE;
+      min_value = HAVOC_BLK_MEDIUM;
+      max_value = HAVOC_BLK_LARGE;
+    }
+    else
+    {
 
-             } else {
-
-               min_value = HAVOC_BLK_LARGE;
-               max_value = HAVOC_BLK_XL;
-
-             }
-
+      min_value = HAVOC_BLK_LARGE;
+      max_value = HAVOC_BLK_XL;
+    }
   }
 
-  if (min_value >= limit) min_value = 1;
+  if (min_value >= limit)
+    min_value = 1;
 
   return min_value + UR(MIN(max_value, limit) - min_value + 1);
-
 }
-
 
 /* Calculate case desirability score to adjust the length of havoc fuzzing.
    A helper function for fuzz_one(). Maybe some of these constants should
    go into config.h. */
 
-static u32 calculate_score(struct queue_entry* q) {
+static u32 calculate_score(struct queue_entry *q)
+{
 
   u32 avg_exec_us = total_cal_us / total_cal_cycles;
   u32 avg_bitmap_size = total_bitmap_size / total_bitmap_entries;
@@ -5794,62 +6196,83 @@ static u32 calculate_score(struct queue_entry* q) {
      global average. Multiplier ranges from 0.1x to 3x. Fast inputs are
      less expensive to fuzz, so we're giving them more air time. */
 
-  if (q->exec_us * 0.1 > avg_exec_us) perf_score = 10;
-  else if (q->exec_us * 0.25 > avg_exec_us) perf_score = 25;
-  else if (q->exec_us * 0.5 > avg_exec_us) perf_score = 50;
-  else if (q->exec_us * 0.75 > avg_exec_us) perf_score = 75;
-  else if (q->exec_us * 4 < avg_exec_us) perf_score = 300;
-  else if (q->exec_us * 3 < avg_exec_us) perf_score = 200;
-  else if (q->exec_us * 2 < avg_exec_us) perf_score = 150;
+  if (q->exec_us * 0.1 > avg_exec_us)
+    perf_score = 10;
+  else if (q->exec_us * 0.25 > avg_exec_us)
+    perf_score = 25;
+  else if (q->exec_us * 0.5 > avg_exec_us)
+    perf_score = 50;
+  else if (q->exec_us * 0.75 > avg_exec_us)
+    perf_score = 75;
+  else if (q->exec_us * 4 < avg_exec_us)
+    perf_score = 300;
+  else if (q->exec_us * 3 < avg_exec_us)
+    perf_score = 200;
+  else if (q->exec_us * 2 < avg_exec_us)
+    perf_score = 150;
 
   /* Adjust score based on bitmap size. The working theory is that better
      coverage translates to better targets. Multiplier from 0.25x to 3x. */
 
-  if (q->bitmap_size * 0.3 > avg_bitmap_size) perf_score *= 3;
-  else if (q->bitmap_size * 0.5 > avg_bitmap_size) perf_score *= 2;
-  else if (q->bitmap_size * 0.75 > avg_bitmap_size) perf_score *= 1.5;
-  else if (q->bitmap_size * 3 < avg_bitmap_size) perf_score *= 0.25;
-  else if (q->bitmap_size * 2 < avg_bitmap_size) perf_score *= 0.5;
-  else if (q->bitmap_size * 1.5 < avg_bitmap_size) perf_score *= 0.75;
+  if (q->bitmap_size * 0.3 > avg_bitmap_size)
+    perf_score *= 3;
+  else if (q->bitmap_size * 0.5 > avg_bitmap_size)
+    perf_score *= 2;
+  else if (q->bitmap_size * 0.75 > avg_bitmap_size)
+    perf_score *= 1.5;
+  else if (q->bitmap_size * 3 < avg_bitmap_size)
+    perf_score *= 0.25;
+  else if (q->bitmap_size * 2 < avg_bitmap_size)
+    perf_score *= 0.5;
+  else if (q->bitmap_size * 1.5 < avg_bitmap_size)
+    perf_score *= 0.75;
 
   /* Adjust score based on handicap. Handicap is proportional to how late
      in the game we learned about this path. Latecomers are allowed to run
      for a bit longer until they catch up with the rest. */
 
-  if (q->handicap >= 4) {
+  if (q->handicap >= 4)
+  {
 
     perf_score *= 4;
     q->handicap -= 4;
-
-  } else if (q->handicap) {
+  }
+  else if (q->handicap)
+  {
 
     perf_score *= 2;
     q->handicap--;
-
   }
 
   /* Final adjustment based on input depth, under the assumption that fuzzing
      deeper test cases is more likely to reveal stuff that can't be
      discovered with traditional fuzzers. */
 
-  switch (q->depth) {
+  switch (q->depth)
+  {
 
-    case 0 ... 3:   break;
-    case 4 ... 7:   perf_score *= 2; break;
-    case 8 ... 13:  perf_score *= 3; break;
-    case 14 ... 25: perf_score *= 4; break;
-    default:        perf_score *= 5;
-
+  case 0 ... 3:
+    break;
+  case 4 ... 7:
+    perf_score *= 2;
+    break;
+  case 8 ... 13:
+    perf_score *= 3;
+    break;
+  case 14 ... 25:
+    perf_score *= 4;
+    break;
+  default:
+    perf_score *= 5;
   }
 
   /* Make sure that we don't go over limit. */
 
-  if (perf_score > HAVOC_MAX_MULT * 100) perf_score = HAVOC_MAX_MULT * 100;
+  if (perf_score > HAVOC_MAX_MULT * 100)
+    perf_score = HAVOC_MAX_MULT * 100;
 
   return perf_score;
-
 }
-
 
 /* Helper function to see if a particular change (xor_val = old ^ new) could
    be a product of deterministic bit flips with the lengths and stepovers
@@ -5858,110 +6281,133 @@ static u32 calculate_score(struct queue_entry* q) {
    return 1 if xor_val is zero, which implies that the old and attempted new
    values are identical and the exec would be a waste of time. */
 
-static u8 could_be_bitflip(u32 xor_val) {
+static u8 could_be_bitflip(u32 xor_val)
+{
 
   u32 sh = 0;
 
-  if (!xor_val) return 1;
+  if (!xor_val)
+    return 1;
 
   /* Shift left until first bit set. */
 
-  while (!(xor_val & 1)) { sh++; xor_val >>= 1; }
+  while (!(xor_val & 1))
+  {
+    sh++;
+    xor_val >>= 1;
+  }
 
   /* 1-, 2-, and 4-bit patterns are OK anywhere. */
 
-  if (xor_val == 1 || xor_val == 3 || xor_val == 15) return 1;
+  if (xor_val == 1 || xor_val == 3 || xor_val == 15)
+    return 1;
 
   /* 8-, 16-, and 32-bit patterns are OK only if shift factor is
      divisible by 8, since that's the stepover for these ops. */
 
-  if (sh & 7) return 0;
+  if (sh & 7)
+    return 0;
 
   if (xor_val == 0xff || xor_val == 0xffff || xor_val == 0xffffffff)
     return 1;
 
   return 0;
-
 }
-
 
 /* Helper function to see if a particular value is reachable through
    arithmetic operations. Used for similar purposes. */
 
-static u8 could_be_arith(u32 old_val, u32 new_val, u8 blen) {
+static u8 could_be_arith(u32 old_val, u32 new_val, u8 blen)
+{
 
   u32 i, ov = 0, nv = 0, diffs = 0;
 
-  if (old_val == new_val) return 1;
+  if (old_val == new_val)
+    return 1;
 
   /* See if one-byte adjustments to any byte could produce this result. */
 
-  for (i = 0; i < blen; i++) {
+  for (i = 0; i < blen; i++)
+  {
 
     u8 a = old_val >> (8 * i),
        b = new_val >> (8 * i);
 
-    if (a != b) { diffs++; ov = a; nv = b; }
-
+    if (a != b)
+    {
+      diffs++;
+      ov = a;
+      nv = b;
+    }
   }
 
   /* If only one byte differs and the values are within range, return 1. */
 
-  if (diffs == 1) {
+  if (diffs == 1)
+  {
 
     if ((u8)(ov - nv) <= ARITH_MAX ||
-        (u8)(nv - ov) <= ARITH_MAX) return 1;
-
+        (u8)(nv - ov) <= ARITH_MAX)
+      return 1;
   }
 
-  if (blen == 1) return 0;
+  if (blen == 1)
+    return 0;
 
   /* See if two-byte adjustments to any byte would produce this result. */
 
   diffs = 0;
 
-  for (i = 0; i < blen / 2; i++) {
+  for (i = 0; i < blen / 2; i++)
+  {
 
     u16 a = old_val >> (16 * i),
         b = new_val >> (16 * i);
 
-    if (a != b) { diffs++; ov = a; nv = b; }
-
+    if (a != b)
+    {
+      diffs++;
+      ov = a;
+      nv = b;
+    }
   }
 
   /* If only one word differs and the values are within range, return 1. */
 
-  if (diffs == 1) {
+  if (diffs == 1)
+  {
 
     if ((u16)(ov - nv) <= ARITH_MAX ||
-        (u16)(nv - ov) <= ARITH_MAX) return 1;
+        (u16)(nv - ov) <= ARITH_MAX)
+      return 1;
 
-    ov = SWAP16(ov); nv = SWAP16(nv);
+    ov = SWAP16(ov);
+    nv = SWAP16(nv);
 
     if ((u16)(ov - nv) <= ARITH_MAX ||
-        (u16)(nv - ov) <= ARITH_MAX) return 1;
-
+        (u16)(nv - ov) <= ARITH_MAX)
+      return 1;
   }
 
   /* Finally, let's do the same thing for dwords. */
 
-  if (blen == 4) {
+  if (blen == 4)
+  {
 
     if ((u32)(old_val - new_val) <= ARITH_MAX ||
-        (u32)(new_val - old_val) <= ARITH_MAX) return 1;
+        (u32)(new_val - old_val) <= ARITH_MAX)
+      return 1;
 
     new_val = SWAP32(new_val);
     old_val = SWAP32(old_val);
 
     if ((u32)(old_val - new_val) <= ARITH_MAX ||
-        (u32)(new_val - old_val) <= ARITH_MAX) return 1;
-
+        (u32)(new_val - old_val) <= ARITH_MAX)
+      return 1;
   }
 
   return 0;
-
 }
-
 
 /* Last but not least, a similar helper to see if insertion of an
    interesting integer is redundant given the insertions done for
@@ -5969,104 +6415,94 @@ static u8 could_be_arith(u32 old_val, u32 new_val, u8 blen) {
    already executed LE insertion for current blen and wants to see
    if BE variant passed in new_val is unique. */
 
-static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
+static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le)
+{
 
   u32 i, j;
 
-  if (old_val == new_val) return 1;
+  if (old_val == new_val)
+    return 1;
 
   /* See if one-byte insertions from interesting_8 over old_val could
      produce new_val. */
 
-  for (i = 0; i < blen; i++) {
+  for (i = 0; i < blen; i++)
+  {
 
-    for (j = 0; j < sizeof(interesting_8); j++) {
+    for (j = 0; j < sizeof(interesting_8); j++)
+    {
 
       u32 tval = (old_val & ~(0xff << (i * 8))) |
                  (((u8)interesting_8[j]) << (i * 8));
 
-      if (new_val == tval) return 1;
-
+      if (new_val == tval)
+        return 1;
     }
-
   }
 
   /* Bail out unless we're also asked to examine two-byte LE insertions
      as a preparation for BE attempts. */
 
-  if (blen == 2 && !check_le) return 0;
+  if (blen == 2 && !check_le)
+    return 0;
 
   /* See if two-byte insertions over old_val could give us new_val. */
 
-  for (i = 0; i < blen - 1; i++) {
+  for (i = 0; i < blen - 1; i++)
+  {
 
-    for (j = 0; j < sizeof(interesting_16) / 2; j++) {
+    for (j = 0; j < sizeof(interesting_16) / 2; j++)
+    {
 
       u32 tval = (old_val & ~(0xffff << (i * 8))) |
                  (((u16)interesting_16[j]) << (i * 8));
 
-      if (new_val == tval) return 1;
+      if (new_val == tval)
+        return 1;
 
       /* Continue here only if blen > 2. */
 
-      if (blen > 2) {
+      if (blen > 2)
+      {
 
         tval = (old_val & ~(0xffff << (i * 8))) |
                (SWAP16(interesting_16[j]) << (i * 8));
 
-        if (new_val == tval) return 1;
-
+        if (new_val == tval)
+          return 1;
       }
-
     }
-
   }
 
-  if (blen == 4 && check_le) {
+  if (blen == 4 && check_le)
+  {
 
     /* See if four-byte insertions could produce the same result
        (LE only). */
 
     for (j = 0; j < sizeof(interesting_32) / 4; j++)
-      if (new_val == (u32)interesting_32[j]) return 1;
-
+      if (new_val == (u32)interesting_32[j])
+        return 1;
   }
 
   return 0;
-
 }
-
-/*******************************************************
- * 新增代码: 调试打印辅助函数 (DEBUG HELPER)          *
- *******************************************************/
-static void print_boundaries_array(const char* label, u32* arr, u32 count, u32 total_len) {
-    fprintf(stderr, "DEBUG [%s]: temp_len=%u, M2_region_count=%u, Boundaries={ ", label, total_len, count);
-    if (arr) {
-        for (u32 i = 0; i <= count; i++) {
-            fprintf(stderr, "%u ", arr[i]);
-        }
-    } else {
-        fprintf(stderr, "NULL ");
-    }
-    fprintf(stderr, "}\n");
-    fflush(stderr);
-}
-/*******************************************************/
 
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
    skipped or bailed out. */
 
-static u8 fuzz_one(char** argv) {
+static u8 fuzz_one(char **argv)
+{
 
   s32 len, fd, temp_len, i, j;
-  u8  *in_buf = NULL, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
-  u64 havoc_queued,  orig_hit_cnt, new_hit_cnt;
+  u8 *in_buf = NULL, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
+  u64 havoc_queued, orig_hit_cnt, new_hit_cnt;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1, M2_len;
 
-  u8  ret_val = 1, doing_det = 0;
+  u8 ret_val = 1, doing_det = 0;
 
-  u8  a_collect[MAX_AUTO_EXTRA];
+  u8 a_collect[MAX_AUTO_EXTRA];
   u32 a_len = 0;
 
   /*******************************************************
@@ -6082,44 +6518,52 @@ static u8 fuzz_one(char** argv) {
   /* In IGNORE_FINDS mode, skip any entries that weren't in the
      initial data set. */
 
-  if (queue_cur->depth > 1) return 1;
+  if (queue_cur->depth > 1)
+    return 1;
 
 #else
 
-  //Skip some steps if in state_aware_mode because in this mode
-  //the seed is selected based on state-aware algorithms
-  if (state_aware_mode && !code_aware_schedule) goto AFLNET_REGIONS_SELECTION;
+  // Skip some steps if in state_aware_mode because in this mode
+  // the seed is selected based on state-aware algorithms
+  if (state_aware_mode && !code_aware_schedule)
+    goto AFLNET_REGIONS_SELECTION;
 
-  if (pending_favored) {
+  if (pending_favored)
+  {
 
     /* If we have any favored, non-fuzzed new arrivals in the queue,
        possibly skip to them at the expense of already-fuzzed or non-favored
        cases. */
 
     if ((queue_cur->was_fuzzed || !queue_cur->favored) &&
-        UR(100) < SKIP_TO_NEW_PROB) return 1;
-
-  } else if (!dumb_mode && !queue_cur->favored && queued_paths > 10) {
+        UR(100) < SKIP_TO_NEW_PROB)
+      return 1;
+  }
+  else if (!dumb_mode && !queue_cur->favored && queued_paths > 10)
+  {
 
     /* Otherwise, still possibly skip non-favored cases, albeit less often.
        The odds of skipping stuff are higher for already-fuzzed inputs and
        lower for never-fuzzed entries. */
 
-    if (queue_cycle > 1 && !queue_cur->was_fuzzed) {
+    if (queue_cycle > 1 && !queue_cur->was_fuzzed)
+    {
 
-      if (UR(100) < SKIP_NFAV_NEW_PROB) return 1;
-
-    } else {
-
-      if (UR(100) < SKIP_NFAV_OLD_PROB) return 1;
-
+      if (UR(100) < SKIP_NFAV_NEW_PROB)
+        return 1;
     }
+    else
+    {
 
+      if (UR(100) < SKIP_NFAV_OLD_PROB)
+        return 1;
+    }
   }
 
 #endif /* ^IGNORE_FINDS */
 
-  if (not_on_tty) {
+  if (not_on_tty)
+  {
     ACTF("Fuzzing test case #%u (%u total, %llu uniq crashes found)...",
          current_entry, queued_paths, unique_crashes);
     fflush(stdout);
@@ -6137,91 +6581,118 @@ AFLNET_REGIONS_SELECTION:;
   and M2_region_count which is the total number of regions in M2. How the information is identified is
   state aware dependent. However, once the information is clear, the code for fuzzing preparation is the same */
 
-  if (state_aware_mode && !code_aware_schedule) {
+  if (state_aware_mode && !code_aware_schedule)
+  {
     /* In state aware mode, select M2 based on the targeted state ID */
     u32 total_region = queue_cur->region_count;
-    if (total_region == 0) PFATAL("0 region found for %s", queue_cur->fname);
+    if (total_region == 0)
+      PFATAL("0 region found for %s", queue_cur->fname);
 
-    if (target_state_id == 0) {
-      //No prefix subsequence (M1 is empty)
+    if (target_state_id == 0)
+    {
+      // No prefix subsequence (M1 is empty)
       M2_start_region_ID = 0;
       M2_region_count = 0;
 
-      //To compute M2_region_count, we identify the first region which has a different annotation
-      //Now we quickly compare the state count, we could make it more fine grained by comparing the exact response codes
-      for(i = 0; i < queue_cur->region_count ; i++) {
-        if (queue_cur->regions[i].state_count != queue_cur->regions[0].state_count) break;
+      // To compute M2_region_count, we identify the first region which has a different annotation
+      // Now we quickly compare the state count, we could make it more fine grained by comparing the exact response codes
+      for (i = 0; i < queue_cur->region_count; i++)
+      {
+        if (queue_cur->regions[i].state_count != queue_cur->regions[0].state_count)
+          break;
         M2_region_count++;
       }
-    } else {
-      //M1 is unlikely to be empty
+    }
+    else
+    {
+      // M1 is unlikely to be empty
       M2_start_region_ID = 0;
 
-      //Identify M2_start_region_ID first based on the target_state_id
-      for(i = 0; i < queue_cur->region_count; i++) {
+      // Identify M2_start_region_ID first based on the target_state_id
+      for (i = 0; i < queue_cur->region_count; i++)
+      {
         u32 regionalStateCount = queue_cur->regions[i].state_count;
-        if (regionalStateCount > 0) {
-          //reachableStateID is the last ID in the state_sequence
+        if (regionalStateCount > 0)
+        {
+          // reachableStateID is the last ID in the state_sequence
           u32 reachableStateID = queue_cur->regions[i].state_sequence[regionalStateCount - 1];
           M2_start_region_ID++;
-          if (reachableStateID == target_state_id) break;
-        } else {
-          //No annotation for this region
+          if (reachableStateID == target_state_id)
+            break;
+        }
+        else
+        {
+          // No annotation for this region
           return 1;
         }
       }
 
-      //Then identify M2_region_count
-      for(i = M2_start_region_ID; i < queue_cur->region_count ; i++) {
-        if (queue_cur->regions[i].state_count != queue_cur->regions[M2_start_region_ID].state_count) break;
+      // Then identify M2_region_count
+      for (i = M2_start_region_ID; i < queue_cur->region_count; i++)
+      {
+        if (queue_cur->regions[i].state_count != queue_cur->regions[M2_start_region_ID].state_count)
+          break;
         M2_region_count++;
       }
 
-      //Handle corner case(s) and skip the current queue entry
-      if (M2_start_region_ID >= queue_cur->region_count) return 1;
+      // Handle corner case(s) and skip the current queue entry
+      if (M2_start_region_ID >= queue_cur->region_count)
+        return 1;
     }
-  } else {
+  }
+  else
+  {
     /* Select M2 randomly */
     u32 total_region = queue_cur->region_count;
-    if (total_region == 0) PFATAL("0 region found for %s", queue_cur->fname);
+    if (total_region == 0)
+      PFATAL("0 region found for %s", queue_cur->fname);
 
     M2_start_region_ID = UR(total_region);
     M2_region_count = UR(total_region - M2_start_region_ID);
-    if (M2_region_count == 0) M2_region_count++; //Mutate one region at least
+    if (M2_region_count == 0)
+      M2_region_count++; // Mutate one region at least
   }
 
   /* Construct the kl_messages linked list and identify boundary pointers (M2_prev and M2_next) */
   kl_messages = construct_kl_messages(queue_cur->fname, queue_cur->regions, queue_cur->region_count);
 
-  kliter_t(lms) *it;
+  kliter_t(lms) * it;
 
   M2_prev = NULL;
   M2_next = kl_end(kl_messages);
 
   u32 count = 0;
-  for (it = kl_begin(kl_messages); it != kl_end(kl_messages); it = kl_next(it)) {
-    if (count == M2_start_region_ID - 1) {
+  for (it = kl_begin(kl_messages); it != kl_end(kl_messages); it = kl_next(it))
+  {
+    if (count == M2_start_region_ID - 1)
+    {
       M2_prev = it;
     }
 
-    if (count == M2_start_region_ID + M2_region_count) {
+    if (count == M2_start_region_ID + M2_region_count)
+    {
       M2_next = it;
     }
     count++;
   }
 
   /* Construct the buffer to be mutated and update out_buf */
-  if (M2_prev == NULL) {
+  if (M2_prev == NULL)
+  {
     it = kl_begin(kl_messages);
-  } else {
+  }
+  else
+  {
     it = kl_next(M2_prev);
   }
 
   u32 in_buf_size = 0;
-  while (it != M2_next) {
-    in_buf = (u8 *) ck_realloc (in_buf, in_buf_size + kl_val(it)->msize);
-    if (!in_buf) PFATAL("AFLNet cannot allocate memory for in_buf");
-    //Retrieve data from kl_messages to populate the in_buf
+  while (it != M2_next)
+  {
+    in_buf = (u8 *)ck_realloc(in_buf, in_buf_size + kl_val(it)->msize);
+    if (!in_buf)
+      PFATAL("AFLNet cannot allocate memory for in_buf");
+    // Retrieve data from kl_messages to populate the in_buf
     memcpy(&in_buf[in_buf_size], kl_val(it)->mdata, kl_val(it)->msize);
 
     in_buf_size += kl_val(it)->msize;
@@ -6233,10 +6704,10 @@ AFLNET_REGIONS_SELECTION:;
   out_buf = ck_alloc_nozero(in_buf_size);
   memcpy(out_buf, in_buf, in_buf_size);
 
-  //Update len to keep the correct size of the buffer being mutated
+  // Update len to keep the correct size of the buffer being mutated
   len = in_buf_size;
 
-  //Save the len for later use
+  // Save the len for later use
   M2_len = len;
 
   /*********************
@@ -6264,17 +6735,19 @@ AFLNET_REGIONS_SELECTION:;
    * SIMPLE BITFLIP (+dictionary construction) *
    *********************************************/
 
-#define FLIP_BIT(_ar, _b) do { \
-    u8* _arf = (u8*)(_ar); \
-    u32 _bf = (_b); \
+#define FLIP_BIT(_ar, _b)                     \
+  do                                          \
+  {                                           \
+    u8 *_arf = (u8 *)(_ar);                   \
+    u32 _bf = (_b);                           \
     _arf[(_bf) >> 3] ^= (128 >> ((_bf) & 7)); \
   } while (0)
 
   /* Single walking bit. */
 
   stage_short = "flip1";
-  stage_max   = len << 3;
-  stage_name  = "bitflip 1/1";
+  stage_max = len << 3;
+  stage_name = "bitflip 1/1";
 
   stage_val_type = STAGE_VAL_NONE;
 
@@ -6282,13 +6755,15 @@ AFLNET_REGIONS_SELECTION:;
 
   prev_cksum = queue_cur->exec_cksum;
 
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
 
     stage_cur_byte = stage_cur >> 3;
 
     FLIP_BIT(out_buf, stage_cur);
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len))
+      goto abandon_entry;
 
     FLIP_BIT(out_buf, stage_cur);
 
@@ -6319,22 +6794,26 @@ AFLNET_REGIONS_SELECTION:;
 
       */
 
-    if (!dumb_mode && (stage_cur & 7) == 7) {
+    if (!dumb_mode && (stage_cur & 7) == 7)
+    {
 
       u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
-      if (stage_cur == stage_max - 1 && cksum == prev_cksum) {
+      if (stage_cur == stage_max - 1 && cksum == prev_cksum)
+      {
 
         /* If at end of file and we are still collecting a string, grab the
            final character and force output. */
 
-        if (a_len < MAX_AUTO_EXTRA) a_collect[a_len] = out_buf[stage_cur >> 3];
+        if (a_len < MAX_AUTO_EXTRA)
+          a_collect[a_len] = out_buf[stage_cur >> 3];
         a_len++;
 
         if (a_len >= MIN_AUTO_EXTRA && a_len <= MAX_AUTO_EXTRA)
           maybe_add_auto(a_collect, a_len);
-
-      } else if (cksum != prev_cksum) {
+      }
+      else if (cksum != prev_cksum)
+      {
 
         /* Otherwise, if the checksum has changed, see if we have something
            worthwhile queued up, and collect that if the answer is yes. */
@@ -6344,64 +6823,64 @@ AFLNET_REGIONS_SELECTION:;
 
         a_len = 0;
         prev_cksum = cksum;
-
       }
 
       /* Continue collecting string, but only if the bit flip actually made
          any difference - we don't want no-op tokens. */
 
-      if (cksum != queue_cur->exec_cksum) {
+      if (cksum != queue_cur->exec_cksum)
+      {
 
-        if (a_len < MAX_AUTO_EXTRA) a_collect[a_len] = out_buf[stage_cur >> 3];
+        if (a_len < MAX_AUTO_EXTRA)
+          a_collect[a_len] = out_buf[stage_cur >> 3];
         a_len++;
-
       }
-
     }
-
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_FLIP1]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_FLIP1] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_FLIP1] += stage_max;
 
   /* Two walking bits. */
 
-  stage_name  = "bitflip 2/1";
+  stage_name = "bitflip 2/1";
   stage_short = "flip2";
-  stage_max   = (len << 3) - 1;
+  stage_max = (len << 3) - 1;
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
 
     stage_cur_byte = stage_cur >> 3;
 
     FLIP_BIT(out_buf, stage_cur);
     FLIP_BIT(out_buf, stage_cur + 1);
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len))
+      goto abandon_entry;
 
     FLIP_BIT(out_buf, stage_cur);
     FLIP_BIT(out_buf, stage_cur + 1);
-
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_FLIP2]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_FLIP2] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_FLIP2] += stage_max;
 
   /* Four walking bits. */
 
-  stage_name  = "bitflip 4/1";
+  stage_name = "bitflip 4/1";
   stage_short = "flip4";
-  stage_max   = (len << 3) - 3;
+  stage_max = (len << 3) - 3;
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
 
     stage_cur_byte = stage_cur >> 3;
 
@@ -6410,18 +6889,18 @@ AFLNET_REGIONS_SELECTION:;
     FLIP_BIT(out_buf, stage_cur + 2);
     FLIP_BIT(out_buf, stage_cur + 3);
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len))
+      goto abandon_entry;
 
     FLIP_BIT(out_buf, stage_cur);
     FLIP_BIT(out_buf, stage_cur + 1);
     FLIP_BIT(out_buf, stage_cur + 2);
     FLIP_BIT(out_buf, stage_cur + 3);
-
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_FLIP4]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_FLIP4] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_FLIP4] += stage_max;
 
   /* Effector map setup. These macros calculate:
@@ -6432,44 +6911,48 @@ AFLNET_REGIONS_SELECTION:;
 
    */
 
-#define EFF_APOS(_p)          ((_p) >> EFF_MAP_SCALE2)
-#define EFF_REM(_x)           ((_x) & ((1 << EFF_MAP_SCALE2) - 1))
-#define EFF_ALEN(_l)          (EFF_APOS(_l) + !!EFF_REM(_l))
+#define EFF_APOS(_p) ((_p) >> EFF_MAP_SCALE2)
+#define EFF_REM(_x) ((_x) & ((1 << EFF_MAP_SCALE2) - 1))
+#define EFF_ALEN(_l) (EFF_APOS(_l) + !!EFF_REM(_l))
 #define EFF_SPAN_ALEN(_p, _l) (EFF_APOS((_p) + (_l) - 1) - EFF_APOS(_p) + 1)
 
   /* Initialize effector map for the next step (see comments below). Always
      flag first and last byte as doing something. */
 
-  eff_map    = ck_alloc(EFF_ALEN(len));
+  eff_map = ck_alloc(EFF_ALEN(len));
   eff_map[0] = 1;
 
-  if (EFF_APOS(len - 1) != 0) {
+  if (EFF_APOS(len - 1) != 0)
+  {
     eff_map[EFF_APOS(len - 1)] = 1;
     eff_cnt++;
   }
 
   /* Walking byte. */
 
-  stage_name  = "bitflip 8/8";
+  stage_name = "bitflip 8/8";
   stage_short = "flip8";
-  stage_max   = len;
+  stage_max = len;
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
 
     stage_cur_byte = stage_cur;
 
     out_buf[stage_cur] ^= 0xFF;
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len))
+      goto abandon_entry;
 
     /* We also use this stage to pull off a simple trick: we identify
        bytes that seem to have no effect on the current execution path
        even when fully flipped - and we skip them during more expensive
        deterministic stages, such as arithmetics or known ints. */
 
-    if (!eff_map[EFF_APOS(stage_cur)]) {
+    if (!eff_map[EFF_APOS(stage_cur)])
+    {
 
       u32 cksum;
 
@@ -6481,15 +6964,14 @@ AFLNET_REGIONS_SELECTION:;
       else
         cksum = ~queue_cur->exec_cksum;
 
-      if (cksum != queue_cur->exec_cksum) {
+      if (cksum != queue_cur->exec_cksum)
+      {
         eff_map[EFF_APOS(stage_cur)] = 1;
         eff_cnt++;
       }
-
     }
 
     out_buf[stage_cur] ^= 0xFF;
-
   }
 
   /* If the effector map is more than EFF_MAX_PERC dense, just flag the
@@ -6497,101 +6979,108 @@ AFLNET_REGIONS_SELECTION:;
      anyway. */
 
   if (eff_cnt != EFF_ALEN(len) &&
-      eff_cnt * 100 / EFF_ALEN(len) > EFF_MAX_PERC) {
+      eff_cnt * 100 / EFF_ALEN(len) > EFF_MAX_PERC)
+  {
 
     memset(eff_map, 1, EFF_ALEN(len));
 
     blocks_eff_select += EFF_ALEN(len);
-
-  } else {
+  }
+  else
+  {
 
     blocks_eff_select += eff_cnt;
-
   }
 
   blocks_eff_total += EFF_ALEN(len);
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_FLIP8]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_FLIP8] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_FLIP8] += stage_max;
 
   /* Two walking bytes. */
 
-  if (len < 2) goto skip_bitflip;
+  if (len < 2)
+    goto skip_bitflip;
 
-  stage_name  = "bitflip 16/8";
+  stage_name = "bitflip 16/8";
   stage_short = "flip16";
-  stage_cur   = 0;
-  stage_max   = len - 1;
+  stage_cur = 0;
+  stage_max = len - 1;
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (i = 0; i < len - 1; i++) {
+  for (i = 0; i < len - 1; i++)
+  {
 
     /* Let's consult the effector map... */
 
-    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
+    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)])
+    {
       stage_max--;
       continue;
     }
 
     stage_cur_byte = i;
 
-    *(u16*)(out_buf + i) ^= 0xFFFF;
+    *(u16 *)(out_buf + i) ^= 0xFFFF;
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len))
+      goto abandon_entry;
     stage_cur++;
 
-    *(u16*)(out_buf + i) ^= 0xFFFF;
-
-
+    *(u16 *)(out_buf + i) ^= 0xFFFF;
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_FLIP16]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_FLIP16] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_FLIP16] += stage_max;
 
-  if (len < 4) goto skip_bitflip;
+  if (len < 4)
+    goto skip_bitflip;
 
   /* Four walking bytes. */
 
-  stage_name  = "bitflip 32/8";
+  stage_name = "bitflip 32/8";
   stage_short = "flip32";
-  stage_cur   = 0;
-  stage_max   = len - 3;
+  stage_cur = 0;
+  stage_max = len - 3;
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (i = 0; i < len - 3; i++) {
+  for (i = 0; i < len - 3; i++)
+  {
 
     /* Let's consult the effector map... */
     if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
-        !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
+        !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)])
+    {
       stage_max--;
       continue;
     }
 
     stage_cur_byte = i;
 
-    *(u32*)(out_buf + i) ^= 0xFFFFFFFF;
+    *(u32 *)(out_buf + i) ^= 0xFFFFFFFF;
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len))
+      goto abandon_entry;
     stage_cur++;
 
-    *(u32*)(out_buf + i) ^= 0xFFFFFFFF;
-
+    *(u32 *)(out_buf + i) ^= 0xFFFFFFFF;
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_FLIP32]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_FLIP32] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_FLIP32] += stage_max;
 
 skip_bitflip:
 
-  if (no_arith) goto skip_arith;
+  if (no_arith)
+    goto skip_arith;
 
   /**********************
    * ARITHMETIC INC/DEC *
@@ -6599,93 +7088,104 @@ skip_bitflip:
 
   /* 8-bit arithmetics. */
 
-  stage_name  = "arith 8/8";
+  stage_name = "arith 8/8";
   stage_short = "arith8";
-  stage_cur   = 0;
-  stage_max   = 2 * len * ARITH_MAX;
+  stage_cur = 0;
+  stage_max = 2 * len * ARITH_MAX;
 
   stage_val_type = STAGE_VAL_LE;
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (i = 0; i < len; i++) {
+  for (i = 0; i < len; i++)
+  {
 
     u8 orig = out_buf[i];
 
     /* Let's consult the effector map... */
 
-    if (!eff_map[EFF_APOS(i)]) {
+    if (!eff_map[EFF_APOS(i)])
+    {
       stage_max -= 2 * ARITH_MAX;
       continue;
     }
 
     stage_cur_byte = i;
 
-    for (j = 1; j <= ARITH_MAX; j++) {
+    for (j = 1; j <= ARITH_MAX; j++)
+    {
 
       u8 r = orig ^ (orig + j);
 
       /* Do arithmetic operations only if the result couldn't be a product
          of a bitflip. */
 
-      if (!could_be_bitflip(r)) {
+      if (!could_be_bitflip(r))
+      {
 
         stage_cur_val = j;
         out_buf[i] = orig + j;
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
+      }
+      else
+        stage_max--;
 
-      } else stage_max--;
+      r = orig ^ (orig - j);
 
-      r =  orig ^ (orig - j);
-
-      if (!could_be_bitflip(r)) {
+      if (!could_be_bitflip(r))
+      {
 
         stage_cur_val = -j;
         out_buf[i] = orig - j;
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
-
-      } else stage_max--;
+      }
+      else
+        stage_max--;
 
       out_buf[i] = orig;
-
     }
-
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_ARITH8]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_ARITH8] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_ARITH8] += stage_max;
 
   /* 16-bit arithmetics, both endians. */
 
-  if (len < 2) goto skip_arith;
+  if (len < 2)
+    goto skip_arith;
 
-  stage_name  = "arith 16/8";
+  stage_name = "arith 16/8";
   stage_short = "arith16";
-  stage_cur   = 0;
-  stage_max   = 4 * (len - 1) * ARITH_MAX;
+  stage_cur = 0;
+  stage_max = 4 * (len - 1) * ARITH_MAX;
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (i = 0; i < len - 1; i++) {
+  for (i = 0; i < len - 1; i++)
+  {
 
-    u16 orig = *(u16*)(out_buf + i);
+    u16 orig = *(u16 *)(out_buf + i);
 
     /* Let's consult the effector map... */
 
-    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
+    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)])
+    {
       stage_max -= 4 * ARITH_MAX;
       continue;
     }
 
     stage_cur_byte = i;
 
-    for (j = 1; j <= ARITH_MAX; j++) {
+    for (j = 1; j <= ARITH_MAX; j++)
+    {
 
       u16 r1 = orig ^ (orig + j),
           r2 = orig ^ (orig - j),
@@ -6699,88 +7199,101 @@ skip_bitflip:
 
       stage_val_type = STAGE_VAL_LE;
 
-      if ((orig & 0xff) + j > 0xff && !could_be_bitflip(r1)) {
+      if ((orig & 0xff) + j > 0xff && !could_be_bitflip(r1))
+      {
 
         stage_cur_val = j;
-        *(u16*)(out_buf + i) = orig + j;
+        *(u16 *)(out_buf + i) = orig + j;
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
+      }
+      else
+        stage_max--;
 
-      } else stage_max--;
-
-      if ((orig & 0xff) < j && !could_be_bitflip(r2)) {
+      if ((orig & 0xff) < j && !could_be_bitflip(r2))
+      {
 
         stage_cur_val = -j;
-        *(u16*)(out_buf + i) = orig - j;
+        *(u16 *)(out_buf + i) = orig - j;
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
-
-      } else stage_max--;
+      }
+      else
+        stage_max--;
 
       /* Big endian comes next. Same deal. */
 
       stage_val_type = STAGE_VAL_BE;
 
-
-      if ((orig >> 8) + j > 0xff && !could_be_bitflip(r3)) {
+      if ((orig >> 8) + j > 0xff && !could_be_bitflip(r3))
+      {
 
         stage_cur_val = j;
-        *(u16*)(out_buf + i) = SWAP16(SWAP16(orig) + j);
+        *(u16 *)(out_buf + i) = SWAP16(SWAP16(orig) + j);
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
+      }
+      else
+        stage_max--;
 
-      } else stage_max--;
-
-      if ((orig >> 8) < j && !could_be_bitflip(r4)) {
+      if ((orig >> 8) < j && !could_be_bitflip(r4))
+      {
 
         stage_cur_val = -j;
-        *(u16*)(out_buf + i) = SWAP16(SWAP16(orig) - j);
+        *(u16 *)(out_buf + i) = SWAP16(SWAP16(orig) - j);
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
+      }
+      else
+        stage_max--;
 
-      } else stage_max--;
-
-      *(u16*)(out_buf + i) = orig;
-
+      *(u16 *)(out_buf + i) = orig;
     }
-
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_ARITH16]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_ARITH16] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_ARITH16] += stage_max;
 
   /* 32-bit arithmetics, both endians. */
 
-  if (len < 4) goto skip_arith;
+  if (len < 4)
+    goto skip_arith;
 
-  stage_name  = "arith 32/8";
+  stage_name = "arith 32/8";
   stage_short = "arith32";
-  stage_cur   = 0;
-  stage_max   = 4 * (len - 3) * ARITH_MAX;
+  stage_cur = 0;
+  stage_max = 4 * (len - 3) * ARITH_MAX;
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (i = 0; i < len - 3; i++) {
+  for (i = 0; i < len - 3; i++)
+  {
 
-    u32 orig = *(u32*)(out_buf + i);
+    u32 orig = *(u32 *)(out_buf + i);
 
     /* Let's consult the effector map... */
 
     if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
-        !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
+        !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)])
+    {
       stage_max -= 4 * ARITH_MAX;
       continue;
     }
 
     stage_cur_byte = i;
 
-    for (j = 1; j <= ARITH_MAX; j++) {
+    for (j = 1; j <= ARITH_MAX; j++)
+    {
 
       u32 r1 = orig ^ (orig + j),
           r2 = orig ^ (orig - j),
@@ -6792,59 +7305,69 @@ skip_bitflip:
 
       stage_val_type = STAGE_VAL_LE;
 
-      if ((orig & 0xffff) + j > 0xffff && !could_be_bitflip(r1)) {
+      if ((orig & 0xffff) + j > 0xffff && !could_be_bitflip(r1))
+      {
 
         stage_cur_val = j;
-        *(u32*)(out_buf + i) = orig + j;
+        *(u32 *)(out_buf + i) = orig + j;
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
+      }
+      else
+        stage_max--;
 
-      } else stage_max--;
-
-      if ((orig & 0xffff) < j && !could_be_bitflip(r2)) {
+      if ((orig & 0xffff) < j && !could_be_bitflip(r2))
+      {
 
         stage_cur_val = -j;
-        *(u32*)(out_buf + i) = orig - j;
+        *(u32 *)(out_buf + i) = orig - j;
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
-
-      } else stage_max--;
+      }
+      else
+        stage_max--;
 
       /* Big endian next. */
 
       stage_val_type = STAGE_VAL_BE;
 
-      if ((SWAP32(orig) & 0xffff) + j > 0xffff && !could_be_bitflip(r3)) {
+      if ((SWAP32(orig) & 0xffff) + j > 0xffff && !could_be_bitflip(r3))
+      {
 
         stage_cur_val = j;
-        *(u32*)(out_buf + i) = SWAP32(SWAP32(orig) + j);
+        *(u32 *)(out_buf + i) = SWAP32(SWAP32(orig) + j);
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
+      }
+      else
+        stage_max--;
 
-      } else stage_max--;
-
-      if ((SWAP32(orig) & 0xffff) < j && !could_be_bitflip(r4)) {
+      if ((SWAP32(orig) & 0xffff) < j && !could_be_bitflip(r4))
+      {
 
         stage_cur_val = -j;
-        *(u32*)(out_buf + i) = SWAP32(SWAP32(orig) - j);
+        *(u32 *)(out_buf + i) = SWAP32(SWAP32(orig) - j);
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
+      }
+      else
+        stage_max--;
 
-      } else stage_max--;
-
-      *(u32*)(out_buf + i) = orig;
-
+      *(u32 *)(out_buf + i) = orig;
     }
-
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_ARITH32]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_ARITH32] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_ARITH32] += stage_max;
 
 skip_arith:
@@ -6853,10 +7376,10 @@ skip_arith:
    * INTERESTING VALUES *
    **********************/
 
-  stage_name  = "interest 8/8";
+  stage_name = "interest 8/8";
   stage_short = "int8";
-  stage_cur   = 0;
-  stage_max   = len * sizeof(interesting_8);
+  stage_cur = 0;
+  stage_max = len * sizeof(interesting_8);
 
   stage_val_type = STAGE_VAL_LE;
 
@@ -6864,25 +7387,29 @@ skip_arith:
 
   /* Setting 8-bit integers. */
 
-  for (i = 0; i < len; i++) {
+  for (i = 0; i < len; i++)
+  {
 
     u8 orig = out_buf[i];
 
     /* Let's consult the effector map... */
 
-    if (!eff_map[EFF_APOS(i)]) {
+    if (!eff_map[EFF_APOS(i)])
+    {
       stage_max -= sizeof(interesting_8);
       continue;
     }
 
     stage_cur_byte = i;
 
-    for (j = 0; j < sizeof(interesting_8); j++) {
+    for (j = 0; j < sizeof(interesting_8); j++)
+    {
 
       /* Skip if the value could be a product of bitflips or arithmetics. */
 
       if (could_be_bitflip(orig ^ (u8)interesting_8[j]) ||
-          could_be_arith(orig, (u8)interesting_8[j], 1)) {
+          could_be_arith(orig, (u8)interesting_8[j], 1))
+      {
         stage_max--;
         continue;
       }
@@ -6890,45 +7417,48 @@ skip_arith:
       stage_cur_val = interesting_8[j];
       out_buf[i] = interesting_8[j];
 
-      if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len))
+        goto abandon_entry;
 
       out_buf[i] = orig;
       stage_cur++;
-
     }
-
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_INTEREST8]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_INTEREST8] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_INTEREST8] += stage_max;
 
   /* Setting 16-bit integers, both endians. */
 
-  if (no_arith || len < 2) goto skip_interest;
+  if (no_arith || len < 2)
+    goto skip_interest;
 
-  stage_name  = "interest 16/8";
+  stage_name = "interest 16/8";
   stage_short = "int16";
-  stage_cur   = 0;
-  stage_max   = 2 * (len - 1) * (sizeof(interesting_16) >> 1);
+  stage_cur = 0;
+  stage_max = 2 * (len - 1) * (sizeof(interesting_16) >> 1);
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (i = 0; i < len - 1; i++) {
+  for (i = 0; i < len - 1; i++)
+  {
 
-    u16 orig = *(u16*)(out_buf + i);
+    u16 orig = *(u16 *)(out_buf + i);
 
     /* Let's consult the effector map... */
 
-    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
+    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)])
+    {
       stage_max -= sizeof(interesting_16);
       continue;
     }
 
     stage_cur_byte = i;
 
-    for (j = 0; j < sizeof(interesting_16) / 2; j++) {
+    for (j = 0; j < sizeof(interesting_16) / 2; j++)
+    {
 
       stage_cur_val = interesting_16[j];
 
@@ -6937,67 +7467,75 @@ skip_arith:
 
       if (!could_be_bitflip(orig ^ (u16)interesting_16[j]) &&
           !could_be_arith(orig, (u16)interesting_16[j], 2) &&
-          !could_be_interest(orig, (u16)interesting_16[j], 2, 0)) {
+          !could_be_interest(orig, (u16)interesting_16[j], 2, 0))
+      {
 
         stage_val_type = STAGE_VAL_LE;
 
-        *(u16*)(out_buf + i) = interesting_16[j];
+        *(u16 *)(out_buf + i) = interesting_16[j];
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
-
-      } else stage_max--;
+      }
+      else
+        stage_max--;
 
       if ((u16)interesting_16[j] != SWAP16(interesting_16[j]) &&
           !could_be_bitflip(orig ^ SWAP16(interesting_16[j])) &&
           !could_be_arith(orig, SWAP16(interesting_16[j]), 2) &&
-          !could_be_interest(orig, SWAP16(interesting_16[j]), 2, 1)) {
+          !could_be_interest(orig, SWAP16(interesting_16[j]), 2, 1))
+      {
 
         stage_val_type = STAGE_VAL_BE;
 
-        *(u16*)(out_buf + i) = SWAP16(interesting_16[j]);
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        *(u16 *)(out_buf + i) = SWAP16(interesting_16[j]);
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
-
-      } else stage_max--;
-
+      }
+      else
+        stage_max--;
     }
 
-    *(u16*)(out_buf + i) = orig;
-
+    *(u16 *)(out_buf + i) = orig;
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_INTEREST16]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_INTEREST16] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_INTEREST16] += stage_max;
 
-  if (len < 4) goto skip_interest;
+  if (len < 4)
+    goto skip_interest;
 
   /* Setting 32-bit integers, both endians. */
 
-  stage_name  = "interest 32/8";
+  stage_name = "interest 32/8";
   stage_short = "int32";
-  stage_cur   = 0;
-  stage_max   = 2 * (len - 3) * (sizeof(interesting_32) >> 2);
+  stage_cur = 0;
+  stage_max = 2 * (len - 3) * (sizeof(interesting_32) >> 2);
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (i = 0; i < len - 3; i++) {
+  for (i = 0; i < len - 3; i++)
+  {
 
-    u32 orig = *(u32*)(out_buf + i);
+    u32 orig = *(u32 *)(out_buf + i);
 
     /* Let's consult the effector map... */
 
     if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
-        !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
+        !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)])
+    {
       stage_max -= sizeof(interesting_32) >> 1;
       continue;
     }
 
     stage_cur_byte = i;
 
-    for (j = 0; j < sizeof(interesting_32) / 4; j++) {
+    for (j = 0; j < sizeof(interesting_32) / 4; j++)
+    {
 
       stage_cur_val = interesting_32[j];
 
@@ -7006,39 +7544,43 @@ skip_arith:
 
       if (!could_be_bitflip(orig ^ (u32)interesting_32[j]) &&
           !could_be_arith(orig, interesting_32[j], 4) &&
-          !could_be_interest(orig, interesting_32[j], 4, 0)) {
+          !could_be_interest(orig, interesting_32[j], 4, 0))
+      {
 
         stage_val_type = STAGE_VAL_LE;
 
-        *(u32*)(out_buf + i) = interesting_32[j];
+        *(u32 *)(out_buf + i) = interesting_32[j];
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
-
-      } else stage_max--;
+      }
+      else
+        stage_max--;
 
       if ((u32)interesting_32[j] != SWAP32(interesting_32[j]) &&
           !could_be_bitflip(orig ^ SWAP32(interesting_32[j])) &&
           !could_be_arith(orig, SWAP32(interesting_32[j]), 4) &&
-          !could_be_interest(orig, SWAP32(interesting_32[j]), 4, 1)) {
+          !could_be_interest(orig, SWAP32(interesting_32[j]), 4, 1))
+      {
 
         stage_val_type = STAGE_VAL_BE;
 
-        *(u32*)(out_buf + i) = SWAP32(interesting_32[j]);
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        *(u32 *)(out_buf + i) = SWAP32(interesting_32[j]);
+        if (common_fuzz_stuff(argv, out_buf, len))
+          goto abandon_entry;
         stage_cur++;
-
-      } else stage_max--;
-
+      }
+      else
+        stage_max--;
     }
 
-    *(u32*)(out_buf + i) = orig;
-
+    *(u32 *)(out_buf + i) = orig;
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_INTEREST32]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_INTEREST32] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_INTEREST32] += stage_max;
 
 skip_interest:
@@ -7047,20 +7589,22 @@ skip_interest:
    * DICTIONARY STUFF *
    ********************/
 
-  if (!extras_cnt) goto skip_user_extras;
+  if (!extras_cnt)
+    goto skip_user_extras;
 
   /* Overwrite with user-supplied extras. */
 
-  stage_name  = "user extras (over)";
+  stage_name = "user extras (over)";
   stage_short = "ext_UO";
-  stage_cur   = 0;
-  stage_max   = extras_cnt * len;
+  stage_cur = 0;
+  stage_max = extras_cnt * len;
 
   stage_val_type = STAGE_VAL_NONE;
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (i = 0; i < len; i++) {
+  for (i = 0; i < len; i++)
+  {
 
     u32 last_len = 0;
 
@@ -7071,7 +7615,8 @@ skip_interest:
        between writes at a particular offset determined by the outer
        loop. */
 
-    for (j = 0; j < extras_cnt; j++) {
+    for (j = 0; j < extras_cnt; j++)
+    {
 
       /* Skip extras probabilistically if extras_cnt > MAX_DET_EXTRAS. Also
          skip them if there's no room to insert the payload, if the token
@@ -7081,50 +7626,52 @@ skip_interest:
       if ((extras_cnt > MAX_DET_EXTRAS && UR(extras_cnt) >= MAX_DET_EXTRAS) ||
           extras[j].len > len - i ||
           !memcmp(extras[j].data, out_buf + i, extras[j].len) ||
-          !memchr(eff_map + EFF_APOS(i), 1, EFF_SPAN_ALEN(i, extras[j].len))) {
+          !memchr(eff_map + EFF_APOS(i), 1, EFF_SPAN_ALEN(i, extras[j].len)))
+      {
 
         stage_max--;
         continue;
-
       }
 
       last_len = extras[j].len;
       memcpy(out_buf + i, extras[j].data, last_len);
 
-      if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len))
+        goto abandon_entry;
 
       stage_cur++;
-
     }
 
     /* Restore all the clobbered memory. */
     memcpy(out_buf + i, in_buf + i, last_len);
-
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_EXTRAS_UO]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_EXTRAS_UO] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_EXTRAS_UO] += stage_max;
 
   /* Insertion of user-supplied extras. */
 
-  stage_name  = "user extras (insert)";
+  stage_name = "user extras (insert)";
   stage_short = "ext_UI";
-  stage_cur   = 0;
-  stage_max   = extras_cnt * len;
+  stage_cur = 0;
+  stage_max = extras_cnt * len;
 
   orig_hit_cnt = new_hit_cnt;
 
   ex_tmp = ck_alloc(len + MAX_DICT_FILE);
 
-  for (i = 0; i <= len; i++) {
+  for (i = 0; i <= len; i++)
+  {
 
     stage_cur_byte = i;
 
-    for (j = 0; j < extras_cnt; j++) {
+    for (j = 0; j < extras_cnt; j++)
+    {
 
-      if (len + extras[j].len > MAX_FILE) {
+      if (len + extras[j].len > MAX_FILE)
+      {
         stage_max--;
         continue;
       }
@@ -7135,76 +7682,77 @@ skip_interest:
       /* Copy tail */
       memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
 
-      if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len)) {
+      if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len))
+      {
         ck_free(ex_tmp);
         goto abandon_entry;
       }
 
       stage_cur++;
-
     }
 
     /* Copy head */
     ex_tmp[i] = out_buf[i];
-
   }
 
   ck_free(ex_tmp);
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_EXTRAS_UI]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_EXTRAS_UI] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_EXTRAS_UI] += stage_max;
 
 skip_user_extras:
 
-  if (!a_extras_cnt) goto skip_extras;
+  if (!a_extras_cnt)
+    goto skip_extras;
 
-  stage_name  = "auto extras (over)";
+  stage_name = "auto extras (over)";
   stage_short = "ext_AO";
-  stage_cur   = 0;
-  stage_max   = MIN(a_extras_cnt, USE_AUTO_EXTRAS) * len;
+  stage_cur = 0;
+  stage_max = MIN(a_extras_cnt, USE_AUTO_EXTRAS) * len;
 
   stage_val_type = STAGE_VAL_NONE;
 
   orig_hit_cnt = new_hit_cnt;
 
-  for (i = 0; i < len; i++) {
+  for (i = 0; i < len; i++)
+  {
 
     u32 last_len = 0;
 
     stage_cur_byte = i;
 
-    for (j = 0; j < MIN(a_extras_cnt, USE_AUTO_EXTRAS); j++) {
+    for (j = 0; j < MIN(a_extras_cnt, USE_AUTO_EXTRAS); j++)
+    {
 
       /* See the comment in the earlier code; extras are sorted by size. */
 
       if (a_extras[j].len > len - i ||
           !memcmp(a_extras[j].data, out_buf + i, a_extras[j].len) ||
-          !memchr(eff_map + EFF_APOS(i), 1, EFF_SPAN_ALEN(i, a_extras[j].len))) {
+          !memchr(eff_map + EFF_APOS(i), 1, EFF_SPAN_ALEN(i, a_extras[j].len)))
+      {
 
         stage_max--;
         continue;
-
       }
 
       last_len = a_extras[j].len;
       memcpy(out_buf + i, a_extras[j].data, last_len);
 
-      if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len))
+        goto abandon_entry;
 
       stage_cur++;
-
     }
 
     /* Restore all the clobbered memory. */
     memcpy(out_buf + i, in_buf + i, last_len);
-
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  stage_finds[STAGE_EXTRAS_AO]  += new_hit_cnt - orig_hit_cnt;
+  stage_finds[STAGE_EXTRAS_AO] += new_hit_cnt - orig_hit_cnt;
   stage_cycles[STAGE_EXTRAS_AO] += stage_max;
 
 skip_extras:
@@ -7213,7 +7761,8 @@ skip_extras:
      we're properly done with deterministic steps and can mark it as such
      in the .state/ directory. */
 
-  if (!queue_cur->passed_det) mark_as_det_done(queue_cur);
+  if (!queue_cur->passed_det)
+    mark_as_det_done(queue_cur);
 
   /****************
    * RANDOM HAVOC *
@@ -7232,25 +7781,26 @@ havoc_stage:
      而不是盲目地操作字节。*/
   message_boundaries = ck_alloc(sizeof(u32) * (M2_region_count + 1));
   message_boundaries[0] = 0; // 第一条消息的起始偏移量总是0
-  
+
   u32 current_offset = 0;
   u32 i_msg; // 使用一个新的循环变量，避免与外部的 'i' 冲突
 
-  for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
+  for (i_msg = 0; i_msg < M2_region_count; i_msg++)
+  {
     // M2_start_region_ID 是 M2 在原始 regions 数组中的起始索引
     u32 region_idx = M2_start_region_ID + i_msg;
-    
+
     // 计算当前消息的长度
-    u32 region_len = (queue_cur->regions[region_idx].end_byte - 
+    u32 region_len = (queue_cur->regions[region_idx].end_byte -
                       queue_cur->regions[region_idx].start_byte + 1);
-    
+
     // 累加偏移量
     current_offset += region_len;
-    
+
     // 存储下一条消息的起始偏移量
     message_boundaries[i_msg + 1] = current_offset;
   }
-  
+
   /*******************************************************
    *                        结束新增代码                     *
    *******************************************************/
@@ -7258,27 +7808,29 @@ havoc_stage:
   /* The havoc stage mutation code is also invoked when splicing files; if the
      splice_cycle variable is set, generate different descriptions and such. */
 
-  if (!splice_cycle) {
+  if (!splice_cycle)
+  {
 
-    stage_name  = "havoc";
+    stage_name = "havoc";
     stage_short = "havoc";
-    stage_max   = (doing_det ? HAVOC_CYCLES_INIT : HAVOC_CYCLES) *
-                  perf_score / havoc_div / 100;
-
-  } else {
+    stage_max = (doing_det ? HAVOC_CYCLES_INIT : HAVOC_CYCLES) *
+                perf_score / havoc_div / 100;
+  }
+  else
+  {
 
     static u8 tmp[32];
 
     perf_score = orig_perf;
 
     sprintf(tmp, "splice %u", splice_cycle);
-    stage_name  = tmp;
+    stage_name = tmp;
     stage_short = "splice";
-    stage_max   = SPLICE_HAVOC * perf_score / havoc_div / 100;
-
+    stage_max = SPLICE_HAVOC * perf_score / havoc_div / 100;
   }
 
-  if (stage_max < HAVOC_MIN) stage_max = HAVOC_MIN;
+  if (stage_max < HAVOC_MIN)
+    stage_max = HAVOC_MIN;
 
   temp_len = len;
 
@@ -7289,980 +7841,233 @@ havoc_stage:
   /* We essentially just do several thousand runs (depending on perf_score)
      where we take the input file and make random stacked tweaks. */
 
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
+
+    // 1. **重置缓冲区状态**
+    if (temp_len < len)
+      out_buf = ck_realloc(out_buf, len);
+    temp_len = len;
+    memcpy(out_buf, in_buf, len);
 
     u32 use_stacking = 1 << (1 + UR(HAVOC_STACK_POW2));
 
     stage_cur_val = use_stacking;
 
-    for (i = 0; i < use_stacking; i++) {
+    //   switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + \
+    //        (M2_region_count > 1 ? 2 : 0) + \
+    //        (M2_region_count >= 2 ? 2 : 0) + /* +2 for MSG_SWAP and MSG_OVERWRITE */ \
+    //        (M2_region_count >= 1 && temp_len > 1 ? 1 : 0))) {  /* +1 for MSG_SPLICE_OP */
 
-      switch (UR(15 + (region_level_mutation ? 4 : 0) + \
-           (M2_region_count > 1 ? 2 : 0) + \
-           (M2_region_count >= 2 ? 2 : 0) + /* +2 for MSG_SWAP and MSG_OVERWRITE */ \
-           (M2_region_count >= 1 && temp_len > 1 ? 1 : 0))) {  /* +1 for MSG_SPLICE_OP */
+    for (i = 0; i < use_stacking; i++)
+    {
+      // 从非结构性操作中选择并执行
 
-      // switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (M2_region_count > 1 ? 2 : 0))) {
-
+      // 在这个 switch 里，只保留非结构性变异的 case
+      switch (UR(13 + (M2_region_count >= 1 && temp_len > 1 ? 1 : 0)))
+      {
+        // ... case 0, 1, 2, ..., 10, 14, 15, 25 ...
         case 0:
-
           /* Flip a single bit somewhere. Spooky! */
-
           FLIP_BIT(out_buf, UR(temp_len << 3));
           break;
 
         case 1:
-
           /* Set byte to interesting value. */
-
           out_buf[UR(temp_len)] = interesting_8[UR(sizeof(interesting_8))];
           break;
 
         case 2:
-
           /* Set word to interesting value, randomly choosing endian. */
-
-          if (temp_len < 2) break;
-
-          if (UR(2)) {
-
-            *(u16*)(out_buf + UR(temp_len - 1)) =
-              interesting_16[UR(sizeof(interesting_16) >> 1)];
-
-          } else {
-
-            *(u16*)(out_buf + UR(temp_len - 1)) = SWAP16(
-              interesting_16[UR(sizeof(interesting_16) >> 1)]);
-
+          if (temp_len < 2)
+            break;
+          if (UR(2))
+          {
+            *(u16 *)(out_buf + UR(temp_len - 1)) =
+                interesting_16[UR(sizeof(interesting_16) >> 1)];
           }
-
+          else
+          {
+            *(u16 *)(out_buf + UR(temp_len - 1)) = SWAP16(
+                interesting_16[UR(sizeof(interesting_16) >> 1)]);
+          }
           break;
 
         case 3:
-
           /* Set dword to interesting value, randomly choosing endian. */
-
-          if (temp_len < 4) break;
-
-          if (UR(2)) {
-
-            *(u32*)(out_buf + UR(temp_len - 3)) =
-              interesting_32[UR(sizeof(interesting_32) >> 2)];
-
-          } else {
-
-            *(u32*)(out_buf + UR(temp_len - 3)) = SWAP32(
-              interesting_32[UR(sizeof(interesting_32) >> 2)]);
-
+          if (temp_len < 4)
+            break;
+          if (UR(2))
+          {
+            *(u32 *)(out_buf + UR(temp_len - 3)) =
+                interesting_32[UR(sizeof(interesting_32) >> 2)];
           }
-
+          else
+          {
+            *(u32 *)(out_buf + UR(temp_len - 3)) = SWAP32(
+                interesting_32[UR(sizeof(interesting_32) >> 2)]);
+          }
           break;
 
         case 4:
-
           /* Randomly subtract from byte. */
-
           out_buf[UR(temp_len)] -= 1 + UR(ARITH_MAX);
           break;
 
         case 5:
-
           /* Randomly add to byte. */
-
           out_buf[UR(temp_len)] += 1 + UR(ARITH_MAX);
           break;
 
         case 6:
-
           /* Randomly subtract from word, random endian. */
+          if (temp_len < 2)
+            break;
 
-          if (temp_len < 2) break;
-
-          if (UR(2)) {
+          if (UR(2))
+          {
 
             u32 pos = UR(temp_len - 1);
 
-            *(u16*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
-
-          } else {
-
+            *(u16 *)(out_buf + pos) -= 1 + UR(ARITH_MAX);
+          }
+          else
+          {
             u32 pos = UR(temp_len - 1);
             u16 num = 1 + UR(ARITH_MAX);
 
-            *(u16*)(out_buf + pos) =
-              SWAP16(SWAP16(*(u16*)(out_buf + pos)) - num);
-
+            *(u16 *)(out_buf + pos) =
+                SWAP16(SWAP16(*(u16 *)(out_buf + pos)) - num);
           }
-
           break;
 
         case 7:
-
           /* Randomly add to word, random endian. */
+          if (temp_len < 2)
+            break;
 
-          if (temp_len < 2) break;
-
-          if (UR(2)) {
-
+          if (UR(2))
+          {
             u32 pos = UR(temp_len - 1);
-
-            *(u16*)(out_buf + pos) += 1 + UR(ARITH_MAX);
-
-          } else {
-
+            *(u16 *)(out_buf + pos) += 1 + UR(ARITH_MAX);
+          }
+          else
+          {
             u32 pos = UR(temp_len - 1);
             u16 num = 1 + UR(ARITH_MAX);
-
-            *(u16*)(out_buf + pos) =
-              SWAP16(SWAP16(*(u16*)(out_buf + pos)) + num);
-
+            *(u16 *)(out_buf + pos) =
+                SWAP16(SWAP16(*(u16 *)(out_buf + pos)) + num);
           }
-
           break;
 
         case 8:
-
           /* Randomly subtract from dword, random endian. */
+          if (temp_len < 4)
+            break;
 
-          if (temp_len < 4) break;
-
-          if (UR(2)) {
-
+          if (UR(2))
+          {
             u32 pos = UR(temp_len - 3);
-
-            *(u32*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
-
-          } else {
-
+            *(u32 *)(out_buf + pos) -= 1 + UR(ARITH_MAX);
+          }
+          else
+          {
             u32 pos = UR(temp_len - 3);
             u32 num = 1 + UR(ARITH_MAX);
-
-            *(u32*)(out_buf + pos) =
-              SWAP32(SWAP32(*(u32*)(out_buf + pos)) - num);
-
+            *(u32 *)(out_buf + pos) =
+                SWAP32(SWAP32(*(u32 *)(out_buf + pos)) - num);
           }
-
           break;
 
         case 9:
-
           /* Randomly add to dword, random endian. */
+          if (temp_len < 4)
+            break;
 
-          if (temp_len < 4) break;
-
-          if (UR(2)) {
-
+          if (UR(2))
+          {
             u32 pos = UR(temp_len - 3);
-
-            *(u32*)(out_buf + pos) += 1 + UR(ARITH_MAX);
-
-          } else {
-
+            *(u32 *)(out_buf + pos) += 1 + UR(ARITH_MAX);
+          }
+          else
+          {
             u32 pos = UR(temp_len - 3);
             u32 num = 1 + UR(ARITH_MAX);
-
-            *(u32*)(out_buf + pos) =
-              SWAP32(SWAP32(*(u32*)(out_buf + pos)) + num);
-
+            *(u32 *)(out_buf + pos) =
+                SWAP32(SWAP32(*(u32 *)(out_buf + pos)) + num);
           }
-
           break;
 
         case 10:
-
           /* Just set a random byte to a random value. Because,
-             why not. We use XOR with 1-255 to eliminate the
-             possibility of a no-op. */
-
+            why not. We use XOR with 1-255 to eliminate the
+            possibility of a no-op. */
           out_buf[UR(temp_len)] ^= 1 + UR(255);
           break;
 
-        // case 11 ... 12: {
-
-        //     /* Delete bytes. We're making this a bit more likely
-        //        than insertion (the next option) in hopes of keeping
-        //        files reasonably small. */
-
-        //     u32 del_from, del_len;
-
-        //     if (temp_len < 2) break;
-
-        //     /* Don't delete too much. */
-
-        //     del_len = choose_block_len(temp_len - 1);
-
-        //     del_from = UR(temp_len - del_len + 1);
-
-        //     memmove(out_buf + del_from, out_buf + del_from + del_len,
-        //             temp_len - del_from - del_len);
-
-        //     temp_len -= del_len;
-
-        //     break;
-
-        //   }
-
-        case 11:
-
-          // if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
-
-          //   /* Clone bytes (75%) or insert a block of constant bytes (25%). */
-
-          //   u8  actually_clone = UR(4);
-          //   u32 clone_from, clone_to, clone_len;
-          //   u8* new_buf;
-
-          //   if (actually_clone) {
-
-          //     clone_len  = choose_block_len(temp_len);
-          //     clone_from = UR(temp_len - clone_len + 1);
-
-          //   } else {
-
-          //     clone_len = choose_block_len(HAVOC_BLK_XL);
-          //     clone_from = 0;
-
-          //   }
-
-          //   clone_to   = UR(temp_len);
-
-          //   new_buf = ck_alloc_nozero(temp_len + clone_len);
-
-          //   /* Head */
-
-          //   memcpy(new_buf, out_buf, clone_to);
-
-          //   /* Inserted part */
-
-          //   if (actually_clone)
-          //     memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
-          //   else
-          //     memset(new_buf + clone_to,
-          //            UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
-
-          //   /* Tail */
-          //   memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
-          //          temp_len - clone_to);
-
-          //   ck_free(out_buf);
-          //   out_buf = new_buf;
-          //   temp_len += clone_len;
-            
-          //   /*******************************************************
-          //    * 同步逻辑: 统一且正确的插入算法 (FIXED CODE)    *
-          //    *******************************************************/
-          //   u32 insert_at = clone_to;
-          //   u32 insert_len = clone_len;
-          //   u32 i_msg, insertion_idx = 0;
-
-          //   for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
-          //       if (message_boundaries[i_msg + 1] >= insert_at) {
-          //           insertion_idx = i_msg + 1;
-          //           break;
-          //       }
-          //   }
-          //   if (i_msg == M2_region_count) insertion_idx = M2_region_count;
-
-          //   M2_region_count++;
-          //   message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-            
-          //   memmove(&message_boundaries[insertion_idx + 1], 
-          //           &message_boundaries[insertion_idx],
-          //           sizeof(u32) * (M2_region_count - insertion_idx));
-
-          //   message_boundaries[insertion_idx] = insert_at;
-            
-          //   for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
-          //        message_boundaries[i_msg] += insert_len;
-          //   }
-
-          //   assert(message_boundaries[M2_region_count] == temp_len);
-          //   /*******************************************************/
-          // }
-
-          // break;
-
-          if (temp_len + HAVOC_BLK_XL >= MAX_FILE) break;
-
-            u8  actually_clone = UR(4);
-            u32 clone_from, clone_len;
-            u8* new_buf;
-            
-            if (actually_clone) {
-              clone_len  = choose_block_len(temp_len);
-              clone_from = UR(temp_len - clone_len + 1);
-            } else {
-              clone_len = choose_block_len(HAVOC_BLK_XL);
-              clone_from = 0;
-            }
-            u32 clone_to = UR(temp_len + 1);
-
-            // --- 打印初始状态 ---
-            fprintf(stderr, "\n--- CASE 13 START ---\n");
-            print_boundaries_array("BEFORE MUTATION", message_boundaries, M2_region_count, temp_len);
-            fprintf(stderr, "DEBUG: clone_to=%u, clone_len=%u\n", clone_to, clone_len);
-            fflush(stderr);
-
-            new_buf = ck_alloc_nozero(temp_len + clone_len);
-            memcpy(new_buf, out_buf, clone_to);
-            if (actually_clone)
-              memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
-            else
-              memset(new_buf + clone_to, UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
-            memcpy(new_buf + clone_to + clone_len, out_buf + clone_to, temp_len - clone_to);
-            
-            ck_free(out_buf);
-            out_buf = new_buf;
-            temp_len += clone_len;
-            
-            /*******************************************************
-             * 同步逻辑: 最终修复版 (带调试打印)              *
-             *******************************************************/
-            u32 insert_at = clone_to;
-            u32 insert_len = clone_len;
-            u32 i_msg, insertion_idx = 0;
-
-            for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
-                if (message_boundaries[i_msg + 1] >= insert_at) {
-                    insertion_idx = i_msg + 1;
-                    break;
-                }
-            }
-            if (i_msg == M2_region_count) insertion_idx = M2_region_count;
-            
-            fprintf(stderr, "DEBUG: Found insertion_idx=%u\n", insertion_idx); fflush(stderr);
-
-            M2_region_count++;
-            message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-            print_boundaries_array("AFTER REALLOC", message_boundaries, M2_region_count-1, temp_len);
-            
-            memmove(&message_boundaries[insertion_idx + 1], 
-                    &message_boundaries[insertion_idx],
-                    sizeof(u32) * (M2_region_count - insertion_idx));
-            print_boundaries_array("AFTER MEMMOVE", message_boundaries, M2_region_count, temp_len);
-
-            message_boundaries[insertion_idx] = insert_at;
-            print_boundaries_array("AFTER INSERTING NEW BOUNDARY", message_boundaries, M2_region_count, temp_len);
-            
-            for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
-                 message_boundaries[i_msg] += insert_len;
-            }
-            print_boundaries_array("AFTER UPDATING SUBSEQUENT", message_boundaries, M2_region_count, temp_len);
-
-            fprintf(stderr, "--- ASSERTING NOW... ---\n"); fflush(stderr);
-            assert(message_boundaries[M2_region_count] == temp_len);
-            /*******************************************************/
-            
+        case 11: {
+          /* Overwrite bytes with a randomly selected chunk (75%) or fixed
+            bytes (25%). */
+          u32 copy_from, copy_to, copy_len;
+          if (temp_len < 2)
             break;
 
-        case 12: {
+          copy_len = choose_block_len(temp_len - 1);
+          copy_from = UR(temp_len - copy_len + 1);
+          copy_to = UR(temp_len - copy_len + 1);
 
-            /* Overwrite bytes with a randomly selected chunk (75%) or fixed
-               bytes (25%). */
-
-            u32 copy_from, copy_to, copy_len;
-
-            if (temp_len < 2) break;
-
-            copy_len  = choose_block_len(temp_len - 1);
-
-            copy_from = UR(temp_len - copy_len + 1);
-            copy_to   = UR(temp_len - copy_len + 1);
-
-            if (UR(4)) {
-
-              if (copy_from != copy_to)
-                memmove(out_buf + copy_to, out_buf + copy_from, copy_len);
-
-            } else memset(out_buf + copy_to,
-                          UR(2) ? UR(256) : out_buf[UR(temp_len)], copy_len);
-
-            break;
-
+          if (UR(4))
+          {
+            if (copy_from != copy_to)
+              memmove(out_buf + copy_to, out_buf + copy_from, copy_len);
           }
+          else
+            memset(out_buf + copy_to,
+                  UR(2) ? UR(256) : out_buf[UR(temp_len)], copy_len);
 
-        /* Values 15 and 16 can be selected only if there are any extras
-           present in the dictionaries. */
+          break;
+        }
 
-        case 13: {
-            if (extras_cnt + a_extras_cnt == 0) break;
+          /* Values 15 and 16 can be selected only if there are any extras
+            present in the dictionaries. */
 
-            /* Overwrite bytes with an extra. */
-
-            if (!extras_cnt || (a_extras_cnt && UR(2))) {
-
-              /* No user-specified extras or odds in our favor. Let's use an
-                 auto-detected one. */
-
-              u32 use_extra = UR(a_extras_cnt);
-              u32 extra_len = a_extras[use_extra].len;
-              u32 insert_at;
-
-              if (extra_len > temp_len) break;
-
-              insert_at = UR(temp_len - extra_len + 1);
-              memcpy(out_buf + insert_at, a_extras[use_extra].data, extra_len);
-
-            } else {
-
-              /* No auto extras or odds in our favor. Use the dictionary. */
-
-              u32 use_extra = UR(extras_cnt);
-              u32 extra_len = extras[use_extra].len;
-              u32 insert_at;
-
-              if (extra_len > temp_len) break;
-
-              insert_at = UR(temp_len - extra_len + 1);
-              memcpy(out_buf + insert_at, extras[use_extra].data, extra_len);
-
-            }
-
+        case 12:
+        {
+          if (extras_cnt + a_extras_cnt == 0)
             break;
 
-          }
+          /* Overwrite bytes with an extra. */
 
-        case 14: {
-            if (extras_cnt + a_extras_cnt == 0) break;
+          if (!extras_cnt || (a_extras_cnt && UR(2)))
+          {
 
-            u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
-            u8* new_buf;
+            /* No user-specified extras or odds in our favor. Let's use an
+              auto-detected one. */
 
-            // --- 打印初始状态 ---
-            fprintf(stderr, "\n--- CASE 16 START ---\n");
-            print_boundaries_array("BEFORE MUTATION", message_boundaries, M2_region_count, temp_len);
-            fprintf(stderr, "DEBUG: clone_to=%u, clone_len=%u\n", clone_to, clone_len);
-            fflush(stderr);
+            u32 use_extra = UR(a_extras_cnt);
+            u32 extra_len = a_extras[use_extra].len;
+            u32 insert_at;
 
-            /* Insert an extra. Do the same dice-rolling stuff as for the
-               previous case. */
-
-            if (!extras_cnt || (a_extras_cnt && UR(2))) {
-
-              use_extra = UR(a_extras_cnt);
-              extra_len = a_extras[use_extra].len;
-
-              if (temp_len + extra_len >= MAX_FILE) break;
-
-              new_buf = ck_alloc_nozero(temp_len + extra_len);
-
-              /* Head */
-              memcpy(new_buf, out_buf, insert_at);
-
-              /* Inserted part */
-              memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
-
-            } else {
-
-              use_extra = UR(extras_cnt);
-              extra_len = extras[use_extra].len;
-
-              if (temp_len + extra_len >= MAX_FILE) break;
-
-              new_buf = ck_alloc_nozero(temp_len + extra_len);
-
-              /* Head */
-              memcpy(new_buf, out_buf, insert_at);
-
-              /* Inserted part */
-              memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
-
-            }
-
-            /* Tail */
-            memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
-                   temp_len - insert_at);
-
-            ck_free(out_buf);
-            out_buf   = new_buf;
-            temp_len += extra_len;
-
-            /*******************************************************
-             * 同步逻辑: 使用与 case 13 完全相同的算法 (FIXED CODE) *
-             *******************************************************/
-            u32 i_msg, insertion_idx = 0;
-
-            // 1. 找到插入点 `insert_at` 应该在哪个索引之后
-            // 这个循环会找到最后一个 message_boundaries[i] < insert_at 的索引 i
-            for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
-                if (message_boundaries[i_msg + 1] >= insert_at) {
-                    insertion_idx = i_msg + 1;
-                    break;
-                }
-            }
-            if (i_msg == M2_region_count) insertion_idx = M2_region_count;
-
-            fprintf(stderr, "DEBUG: Found insertion_idx=%u\n", insertion_idx); fflush(stderr);
-
-            // 2. 消息总数+1, 并为边界数组扩容
-            M2_region_count++;
-            message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-
-            print_boundaries_array("AFTER REALLOC", message_boundaries, M2_region_count-1, temp_len);
-            
-            // 3. 为新边界腾出空间，将插入点之后的所有元素向后移动
-            memmove(&message_boundaries[insertion_idx + 1], 
-                    &message_boundaries[insertion_idx],
-                    sizeof(u32) * (M2_region_count - insertion_idx));
-
-            print_boundaries_array("AFTER MEMMOVE", message_boundaries, M2_region_count, temp_len);
-
-            // 4. 插入新的边界点。
-            // 如果是在消息内部插入，这会成为一个分裂点。
-            // 如果是在消息之间插入，这会成为新消息的结束点。
-            message_boundaries[insertion_idx] = insert_at;
-
-            print_boundaries_array("AFTER INSERTING NEW BOUNDARY", message_boundaries, M2_region_count, temp_len);
-            
-            // 5. 更新所有在新插入边界点 *之后* 的边界点的值
-            for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
-                 message_boundaries[i_msg] += extra_len; // <--- 使用对应的长度变量
-            }
-
-            print_boundaries_array("AFTER UPDATING SUBSEQUENT", message_boundaries, M2_region_count, temp_len);
-
-            fprintf(stderr, "--- ASSERTING NOW... ---\n"); fflush(stderr);
-
-            // 安全断言：检查最后一个边界点是否等于新的总长度
-            assert(message_boundaries[M2_region_count] == temp_len);
-            /*******************************************************/
-
-            break;
-
-          }
-        /* Values 17 to 20 can be selected only if region-level mutations are enabled */
-
-        /* Replace the current region with a random region from a random seed */
-        case 15: {
-            u32 src_region_len = 0;
-            u8* new_buf = choose_source_region(&src_region_len);
-            if (new_buf == NULL) break;
-
-            //replace the current region
-            ck_free(out_buf);
-            out_buf = new_buf;
-            temp_len = src_region_len;
-
-            /* 同步: 现在只有一条消息 */
-            M2_region_count = 1;
-            message_boundaries[0] = 0;
-            message_boundaries[1] = temp_len;
-
-            break;
-          }
-
-        /* Insert a random region from a random seed to the beginning of the current region */
-        case 16: {
-            u32 src_region_len = 0;
-            u8* src_region = choose_source_region(&src_region_len);
-            if (src_region == NULL) break;
-
-            if (temp_len + src_region_len >= MAX_FILE) {
-              ck_free(src_region);
+            if (extra_len > temp_len)
               break;
-            }
 
-            u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
-
-            memcpy(new_buf, src_region, src_region_len);
-
-            memcpy(&new_buf[src_region_len], out_buf, temp_len);
-
-            ck_free(out_buf);
-            ck_free(src_region);
-            out_buf = new_buf;
-            temp_len += src_region_len;
-
-            /* 同步: 插入的区域成为新的第一条消息 */
-            M2_region_count++;
-            message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-            memmove(&message_boundaries[1], &message_boundaries[0], sizeof(u32) * M2_region_count);
-            message_boundaries[0] = 0;
-            message_boundaries[1] = src_region_len;
-            for (u32 i = 2; i <= M2_region_count; i++) {
-                message_boundaries[i] += src_region_len;
-            }
-
-            break;
+            insert_at = UR(temp_len - extra_len + 1);
+            memcpy(out_buf + insert_at, a_extras[use_extra].data, extra_len);
           }
+          else
+          {
 
-        /* Insert a random region from a random seed to the end of the current region */
-        case 17: {
-            u32 src_region_len = 0;
-            u8* src_region = choose_source_region(&src_region_len);
-            if (src_region == NULL) break;
+            /* No auto extras or odds in our favor. Use the dictionary. */
+            u32 use_extra = UR(extras_cnt);
+            u32 extra_len = extras[use_extra].len;
+            u32 insert_at;
 
-            if (temp_len + src_region_len >= MAX_FILE) {
-              ck_free(src_region);
+            if (extra_len > temp_len)
               break;
-            }
 
-            u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
-
-            memcpy(new_buf, out_buf, temp_len);
-
-            memcpy(&new_buf[temp_len], src_region, src_region_len);
-
-            ck_free(out_buf);
-            ck_free(src_region);
-            out_buf = new_buf;
-            temp_len += src_region_len;
-
-            /* 同步: 插入的区域成为新的最后一条消息 */
-            M2_region_count++;
-            message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-            message_boundaries[M2_region_count] = temp_len;
-
-            break;
+            insert_at = UR(temp_len - extra_len + 1);
+            memcpy(out_buf + insert_at, extras[use_extra].data, extra_len);
           }
-
-        /* Duplicate the current region */
-        case 18: {
-            if (temp_len * 2 >= MAX_FILE) break;
-
-            u8* new_buf = ck_alloc_nozero(temp_len * 2);
-
-            memcpy(new_buf, out_buf, temp_len);
-
-            memcpy(&new_buf[temp_len], out_buf, temp_len);
-
-            ck_free(out_buf);
-            out_buf = new_buf;
-            temp_len += temp_len;
-
-            /* 同步: 消息数量翻倍，边界也跟着复制 */
-            u32 old_count = M2_region_count;
-            M2_region_count *= 2;
-            message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-            for (u32 i = 0; i < old_count; i++) {
-                message_boundaries[old_count + i + 1] = message_boundaries[i + 1] + (temp_len / 2);
-            }
-
-            break;
-          }
-
-          /*******************************************************
-         * 新增代码: 结构感知的变异算子 (MODIFIED CODE) *
-         *******************************************************/
-
-        /* MSG_DELETE: 删除一个完整的消息 */
-        case 19: {
-
-          /* 只有在至少有两条消息时，删除才有意义 */
-          if (temp_len < 2 || M2_region_count < 2) break;
-
-          /* 随机选择要删除的消息索引 */
-          u32 msg_idx_del = UR(M2_region_count);
-
-          /* 获取该消息的边界和长度 */
-          u32 msg_start_del = message_boundaries[msg_idx_del];
-          u32 msg_len_del   = message_boundaries[msg_idx_del + 1] - msg_start_del;
-
-          printf("================ DEBUG INFO ================\n");
-          printf("temp_len        = %u\n", temp_len);
-          printf("M2_region_count = %u\n", M2_region_count);
-          printf("msg_idx_del     = %u\n", msg_idx_del);
-          printf("msg_start_del   = %u\n", msg_start_del);
-          printf("msg_len_del     = %u\n", msg_len_del);
-          printf("==========================================\n");
-          fflush(stdout);
-
-          /* 使用 memmove 将被删除消息之后的所有数据向前移动，覆盖它 */
-          memmove(out_buf + msg_start_del,
-                  out_buf + msg_start_del + msg_len_del,
-                  temp_len - (msg_start_del + msg_len_del));
-
-          /* 更新缓冲区的总长度 */
-          temp_len -= msg_len_del;
-
-          /*******************************************************
-           * 新增代码: 同步 message_boundaries (MODIFIED CODE) *
-           *******************************************************/
-          /* 从被删除消息的下一个位置开始，所有边界都需要向前移动 msg_len_del */
-          u32 k;
-          for (k = msg_idx_del + 1; k <= M2_region_count; k++) {
-            message_boundaries[k] -= msg_len_del;
-          }
-          
-          /* 将数组中被删除消息后面的元素向前移动一位 */
-          memmove(&message_boundaries[msg_idx_del],
-                  &message_boundaries[msg_idx_del + 1],
-                  sizeof(u32) * (M2_region_count - msg_idx_del));
-          
-          /* 消息总数减一 */
-          M2_region_count--;
-
-          break;
-        }
-
-        /* MSG_DUPLICATE: 复制一个完整的消息 */
-        case 20: {
-
-          /* 只有在有消息可复制时才执行 */
-          if (temp_len < 1 || M2_region_count < 1) break;
-
-          /* 随机选择要复制的消息 */
-          u32 msg_idx_dup = UR(M2_region_count);
-          u32 msg_start_dup = message_boundaries[msg_idx_dup];
-          u32 msg_len_dup   = message_boundaries[msg_idx_dup + 1] - msg_start_dup;
-          
-          /* 检查复制后是否会超出最大文件大小限制 */
-          if (temp_len + msg_len_dup >= MAX_FILE) break;
-          
-          /* 随机选择一个插入点（可以在任何两条消息之间，包括开头和结尾）*/
-          u32 insert_at_msg_idx = UR(M2_region_count + 1);
-          u32 insert_offset     = message_boundaries[insert_at_msg_idx];
-
-          /* 创建一个新的、更大的缓冲区 */
-          u8* new_buf = ck_alloc_nozero(temp_len + msg_len_dup);
-
-          /* 1. 拷贝插入点之前的数据 */
-          memcpy(new_buf, out_buf, insert_offset);
-
-          /* 2. 拷贝被复制的消息到插入点 */
-          memcpy(new_buf + insert_offset, out_buf + msg_start_dup, msg_len_dup);
-          
-          /* 3. 拷贝插入点之后的数据 */
-          memcpy(new_buf + insert_offset + msg_len_dup,
-                 out_buf + insert_offset,
-                 temp_len - insert_offset);
-
-          /* 释放旧缓冲区，用新缓冲区取而代之 */
-          ck_free(out_buf);
-          out_buf = new_buf;
-          
-          /* 更新缓冲区的总长度 */
-          temp_len += msg_len_dup;
-
-          /*******************************************************
-           * 新增代码: 同步 message_boundaries (MODIFIED CODE) *
-           *******************************************************/
-          /* 消息总数加一，需要为边界数组重新分配更大的空间 */
-          M2_region_count++;
-          message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-
-          /* 为新插入的消息腾出空间，将插入点之后的所有边界向后移动一位 */
-          memmove(&message_boundaries[insert_at_msg_idx + 1],
-                  &message_boundaries[insert_at_msg_idx],
-                  sizeof(u32) * (M2_region_count - insert_at_msg_idx));
-
-          /* 从插入点的下一个位置开始，所有边界都需要向后移动 msg_len_dup */
-          u32 i;
-          for (i = insert_at_msg_idx + 1; i <= M2_region_count; i++) {
-            message_boundaries[i] += msg_len_dup;
-          }
-          /*******************************************************/
-
-          break;
-        }
-       /*******************************************************
-        *                        结束新增代码                     *
-        *******************************************************/
-
-        /*******************************************************
-         * 新增变异算子: 消息交换 (MSG_SWAP)          *
-         *******************************************************/
-        case 21: {
-          /* 前提条件：必须至少有两条消息才能交换 */
-          if (M2_region_count < 2) break;
-
-          u32 msg_idx1, msg_idx2;
-          u32 start1, len1, start2, len2;
-          u8* new_buf;
-          u32 intermediate_start, intermediate_len;
-
-          /* 1. 随机选择两个 *不同* 的消息索引 */
-          msg_idx1 = UR(M2_region_count);
-          do {
-            msg_idx2 = UR(M2_region_count);
-          } while (msg_idx1 == msg_idx2);
-
-          /* 2. 确保 idx1 < idx2 以简化逻辑 */
-          if (msg_idx1 > msg_idx2) {
-            u32 tmp = msg_idx1;
-            msg_idx1 = msg_idx2;
-            msg_idx2 = tmp;
-          }
-
-          /* 3. 获取两条消息的边界和它们之间数据的边界 */
-          start1 = message_boundaries[msg_idx1];
-          len1   = message_boundaries[msg_idx1 + 1] - start1;
-
-          start2 = message_boundaries[msg_idx2];
-          len2   = message_boundaries[msg_idx2 + 1] - start2;
-          
-          intermediate_start = start1 + len1;
-          intermediate_len = start2 - intermediate_start;
-
-          assert(start1 + len1 <= temp_len);
-          assert(start2 + len2 <= temp_len);
-          assert(intermediate_start + intermediate_len <= temp_len);
-
-          /* 4. 创建一个新缓冲区来执行交换，这是处理不同长度消息交换最安全的方法 */
-          new_buf = ck_alloc_nozero(temp_len);
-
-          /* 5. 按新的顺序分段拷贝数据 */
-          // Part A: 第一条消息之前的所有数据
-          memcpy(new_buf, out_buf, start1);
-          
-          // Part B: 将 *第二条* 消息拷贝到第一条的位置
-          memcpy(new_buf + start1, out_buf + start2, len2);
-
-          // Part C: 拷贝两条消息之间的所有数据
-          memcpy(new_buf + start1 + len2, out_buf + intermediate_start, intermediate_len);
-
-          // Part D: 将 *第一条* 消息拷贝到第二条的位置
-          memcpy(new_buf + start1 + len2 + intermediate_len, out_buf + start1, len1);
-
-          // Part E: 第二条消息之后的所有数据
-          // memcpy(new_buf + start1 + len2 + intermediate_len + len1,
-          //        out_buf + start2 + len2,
-          //        temp_len - (start2 + len2));
-
-          // 【BUG修正】原代码这里计算有误，可能导致越界读取
-          u32 tail_start = start2 + len2;
-          u32 tail_len = temp_len - tail_start;
-          u32 tail_dest_start = start1 + len2 + intermediate_len + len1;
-
-          // 断言检查写入和读取的最后位置
-          assert(tail_dest_start + tail_len <= temp_len);
-          assert(tail_start + tail_len <= temp_len);
-          
-          memcpy(new_buf + tail_dest_start, out_buf + tail_start, tail_len);
-          
-          /* 6. 替换旧缓冲区 */
-          ck_free(out_buf);
-          out_buf = new_buf;
-
-          /*******************************************************
-             * 同步逻辑: 重新计算交换区域内的所有边界           *
-             *******************************************************/
-            // 只有 msg_idx1 和 msg_idx2 之间的边界需要更新
-            u32 current_pos = message_boundaries[msg_idx1];
-            
-            // 更新交换后的 msg2 (现在在前面了)
-            current_pos += len2;
-            message_boundaries[msg_idx1 + 1] = current_pos;
-
-            // 更新中间消息的边界
-            u32 i_msg;
-            for (i_msg = msg_idx1 + 1; i_msg < msg_idx2; i_msg++) {
-                u32 msg_len = message_boundaries[i_msg + 1] - message_boundaries[i_msg];
-                current_pos += msg_len;
-                message_boundaries[i_msg + 1] = current_pos;
-            }
-
-            // 更新交换后的 msg1 (现在在后面了)
-            current_pos += len1;
-            message_boundaries[msg_idx2 + 1] = current_pos;
-
-            assert(message_boundaries[M2_region_count] == temp_len);
-            /*******************************************************/
-
-          /* 总长度不变 */
-          break;
-        }
-
-        /*******************************************************
-         * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
-         *******************************************************/
-        case 22: {
-          /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
-          if (M2_region_count < 1 || temp_len < 2) break;
-          
-          printf(">>> STARTING CASE 24 (SPLICE) <<<\n");
-          fflush(stdout);
-
-          u32 msg_to_split_idx, msg_to_insert_idx;
-          u32 split_start, split_len, split_offset_in_msg;
-          u32 insert_start, insert_len;
-          u8* new_buf;
-
-          /* 1. 随机选择一条消息进行分裂 */
-          msg_to_split_idx = UR(M2_region_count);
-          split_start = message_boundaries[msg_to_split_idx];
-          split_len   = message_boundaries[msg_to_split_idx + 1] - split_start;
-
-          if (split_len < 2) break; // 长度为1的消息无法分裂
-
-          /* 2. 随机选择另一条消息作为插入内容 (可以是同一条) */
-          msg_to_insert_idx = UR(M2_region_count);
-          insert_start = message_boundaries[msg_to_insert_idx];
-          insert_len   = message_boundaries[msg_to_insert_idx + 1] - insert_start;
-
-          /* 3. 检查变异后是否会超出文件大小限制 */
-          if (temp_len + insert_len >= MAX_FILE) break;
-
-          /* 4. 确定在消息内部的分裂点 (1 到 len-1) */
-          split_offset_in_msg = 1 + UR(split_len - 1);
-
-          /* 5. 创建新缓冲区 */
-          u32 new_len = temp_len + insert_len;
-          new_buf = ck_alloc_nozero(new_len);
-
-          /* 6. 分段拷贝 */
-          // Part A: 拷贝到分裂点(包含)
-          u32 split_point_abs = split_start + split_offset_in_msg;
-
-          // 断言检查
-          assert(split_point_abs <= temp_len);
-          assert(insert_start + insert_len <= temp_len);
-          assert(split_point_abs + insert_len + (temp_len - split_point_abs) <= new_len);
-
-          memcpy(new_buf, out_buf, split_point_abs);
-
-          // Part B: 在分裂点插入选定的消息内容
-          memcpy(new_buf + split_point_abs, out_buf + insert_start, insert_len);
-
-          // Part C: 拷贝原缓冲区剩余的部分
-          memcpy(new_buf + split_point_abs + insert_len,
-                 out_buf + split_point_abs,
-                 temp_len - split_point_abs);
-
-          /* 7. 替换旧缓冲区并更新长度 */
-          ck_free(out_buf);
-          out_buf = new_buf;
-          temp_len += insert_len;
-
-          /*******************************************************
-             * 同步逻辑: 使用统一算法 (FIXED CODE)             *
-             *******************************************************/
-            // 1. 消息分裂点就是插入点，分裂的消息索引就是 insertion_idx
-            u32 i_msg, insertion_idx = 0;
-
-            // 1. 找到插入点 `insert_at` 应该在哪个索引之后
-            // 这个循环会找到最后一个 message_boundaries[i] < insert_at 的索引 i
-            for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
-                if (message_boundaries[i_msg + 1] >= split_point_abs) {
-                    insertion_idx = i_msg + 1;
-                    break;
-                }
-            }
-            if (i_msg == M2_region_count) insertion_idx = M2_region_count;
-
-            // 2. 消息总数+1, 并为边界数组扩容
-            M2_region_count++;
-            message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
-            
-            // 3. 为新边界腾出空间，将插入点之后的所有元素向后移动
-            memmove(&message_boundaries[insertion_idx + 1], 
-                    &message_boundaries[insertion_idx],
-                    sizeof(u32) * (M2_region_count - insertion_idx));
-
-            // 4. 插入新的边界点。
-            // 如果是在消息内部插入，这会成为一个分裂点。
-            // 如果是在消息之间插入，这会成为新消息的结束点。
-            message_boundaries[insertion_idx] = split_point_abs;
-            
-            // 5. 更新所有在新插入边界点 *之后* 的边界点的值
-            for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
-                 message_boundaries[i_msg] += insert_len; // <--- 使用对应的长度变量
-            }
-
-            // 安全断言：检查最后一个边界点是否等于新的总长度
-            assert(message_boundaries[M2_region_count] == temp_len);
-            /*******************************************************/
-
 
           break;
         }
@@ -8270,9 +8075,11 @@ havoc_stage:
         // /*******************************************************
         //  * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
         //  *******************************************************/
-        case 23: {
+        case 13:
+        {
           /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
-          if (M2_region_count < 2) break;
+          if (M2_region_count < 2)
+            break;
 
           printf(">>> RUNNING CASE 25 (OVERWRITE) <<<\n");
           fflush(stdout);
@@ -8283,30 +8090,1197 @@ havoc_stage:
 
           /* 1. 随机选择源消息和目标消息 */
           target_idx = UR(M2_region_count);
-          do {
+          do
+          {
             src_idx = UR(M2_region_count);
           } while (target_idx == src_idx);
-          
+
           target_start = message_boundaries[target_idx];
-          target_len   = message_boundaries[target_idx + 1] - target_start;
+          target_len = message_boundaries[target_idx + 1] - target_start;
 
           src_start = message_boundaries[src_idx];
-          src_len   = message_boundaries[src_idx + 1] - src_start;
+          src_len = message_boundaries[src_idx + 1] - src_start;
 
           /* 2. 将源消息的内容覆盖到目标消息的位置 */
           /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
           u32 overwrite_len = MIN(target_len, src_len);
-          if (overwrite_len > 0) {
+          if (overwrite_len > 0)
+          {
             memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
           }
 
           /* 缓冲区总长度不变 */
           break;
         }
+      }
+    }
 
+    if (UR(3) == 0)
+    {
+    //   switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + \
+    //        (M2_region_count > 1 ? 2 : 0) + \
+    //        (M2_region_count >= 2 ? 2 : 0) + /* +2 for MSG_SWAP and MSG_OVERWRITE */ \
+    //        (M2_region_count >= 1 && temp_len > 1 ? 1 : 0))) {  /* +1 for MSG_SPLICE_OP */
+
+      // 在这个 switch 里，只保留结构性变异的 case
+      switch (UR(7 + \
+            (temp_len > 1 && M2_region_count > 1 ? 1 : 0) + \
+            (temp_len >= 1 && M2_region_count >= 1 ? 1 : 0) + \
+            (M2_region_count > 1 ? 1 : 0) + \
+            (M2_region_count >= 1 && temp_len > 1 ? 1 : 0)))
+      {
+      // ... case 11, 13, 16, ..., 24 ...
+      // 注意：这些 case 内部会修改 temp_len 和 out_buf 的指针
+      case 0:
+      {
+
+        /* Delete bytes. We're making this a bit more likely
+           than insertion (the next option) in hopes of keeping
+           files reasonably small. */
+
+        u32 del_from, del_len;
+
+        if (temp_len < 2)
+          break;
+
+        /* Don't delete too much. */
+
+        del_len = choose_block_len(temp_len - 1);
+
+        del_from = UR(temp_len - del_len + 1);
+
+        memmove(out_buf + del_from, out_buf + del_from + del_len,
+                temp_len - del_from - del_len);
+
+        temp_len -= del_len;
+
+        break;
       }
 
-    }
+      case 1:
+
+        if (temp_len + HAVOC_BLK_XL < MAX_FILE)
+        {
+
+          /* Clone bytes (75%) or insert a block of constant bytes (25%). */
+
+          u8 actually_clone = UR(4);
+          u32 clone_from, clone_to, clone_len;
+          u8 *new_buf;
+
+          if (actually_clone)
+          {
+
+            clone_len = choose_block_len(temp_len);
+            clone_from = UR(temp_len - clone_len + 1);
+          }
+          else
+          {
+
+            clone_len = choose_block_len(HAVOC_BLK_XL);
+            clone_from = 0;
+          }
+
+          clone_to = UR(temp_len);
+
+          new_buf = ck_alloc_nozero(temp_len + clone_len);
+
+          /* Head */
+
+          memcpy(new_buf, out_buf, clone_to);
+
+          /* Inserted part */
+
+          if (actually_clone)
+            memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
+          else
+            memset(new_buf + clone_to,
+                   UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
+
+          /* Tail */
+          memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
+                 temp_len - clone_to);
+
+          ck_free(out_buf);
+          out_buf = new_buf;
+          temp_len += clone_len;
+        }
+
+        break;
+
+      case 2:
+      {
+        if (extras_cnt + a_extras_cnt == 0)
+          break;
+
+        u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
+        u8 *new_buf;
+
+        /* Insert an extra. Do the same dice-rolling stuff as for the
+           previous case. */
+
+        if (!extras_cnt || (a_extras_cnt && UR(2)))
+        {
+
+          use_extra = UR(a_extras_cnt);
+          extra_len = a_extras[use_extra].len;
+
+          if (temp_len + extra_len >= MAX_FILE)
+            break;
+
+          new_buf = ck_alloc_nozero(temp_len + extra_len);
+
+          /* Head */
+          memcpy(new_buf, out_buf, insert_at);
+
+          /* Inserted part */
+          memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
+        }
+        else
+        {
+
+          use_extra = UR(extras_cnt);
+          extra_len = extras[use_extra].len;
+
+          if (temp_len + extra_len >= MAX_FILE)
+            break;
+
+          new_buf = ck_alloc_nozero(temp_len + extra_len);
+
+          /* Head */
+          memcpy(new_buf, out_buf, insert_at);
+
+          /* Inserted part */
+          memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
+        }
+
+        /* Tail */
+        memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
+               temp_len - insert_at);
+
+        ck_free(out_buf);
+        out_buf = new_buf;
+        temp_len += extra_len;
+
+        break;
+      }
+
+      /* Values 17 to 20 can be selected only if region-level mutations are enabled */
+
+      /* Replace the current region with a random region from a random seed */
+      case 3: {
+          u32 src_region_len = 0;
+          u8* new_buf = choose_source_region(&src_region_len);
+          if (new_buf == NULL) break;
+
+          //replace the current region
+          ck_free(out_buf);
+          out_buf = new_buf;
+          temp_len = src_region_len;
+          break;
+        }
+
+      /* Insert a random region from a random seed to the beginning of the current region */
+      case 4: {
+          u32 src_region_len = 0;
+          u8* src_region = choose_source_region(&src_region_len);
+          if (src_region == NULL) break;
+
+          if (temp_len + src_region_len >= MAX_FILE) {
+            ck_free(src_region);
+            break;
+          }
+
+          u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
+
+          memcpy(new_buf, src_region, src_region_len);
+
+          memcpy(&new_buf[src_region_len], out_buf, temp_len);
+
+          ck_free(out_buf);
+          ck_free(src_region);
+          out_buf = new_buf;
+          temp_len += src_region_len;
+          break;
+        }
+
+      /* Insert a random region from a random seed to the end of the current region */
+      case 5: {
+          u32 src_region_len = 0;
+          u8* src_region = choose_source_region(&src_region_len);
+          if (src_region == NULL) break;
+
+          if (temp_len + src_region_len >= MAX_FILE) {
+            ck_free(src_region);
+            break;
+          }
+
+          u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
+
+          memcpy(new_buf, out_buf, temp_len);
+
+          memcpy(&new_buf[temp_len], src_region, src_region_len);
+
+          ck_free(out_buf);
+          ck_free(src_region);
+          out_buf = new_buf;
+          temp_len += src_region_len;
+          break;
+        }
+
+      /* Duplicate the current region */
+      case 6: {
+        if (temp_len * 2 >= MAX_FILE) break;
+
+        u8* new_buf = ck_alloc_nozero(temp_len * 2);
+
+        memcpy(new_buf, out_buf, temp_len);
+
+        memcpy(&new_buf[temp_len], out_buf, temp_len);
+
+        ck_free(out_buf);
+        out_buf = new_buf;
+        temp_len += temp_len;
+        break;
+      }
+
+      /*******************************************************
+       * 新增代码: 结构感知的变异算子 (MODIFIED CODE) *
+       *******************************************************/
+
+      /* MSG_DELETE: 删除一个完整的消息 */
+      case 7: {
+
+        /* 只有在至少有两条消息时，删除才有意义 */
+        if (temp_len < 2 || M2_region_count < 2) break;
+
+        /* 随机选择要删除的消息索引 */
+        u32 msg_idx_del = UR(M2_region_count - 1);
+
+        /* 获取该消息的边界和长度 */
+        u32 msg_start_del = message_boundaries[msg_idx_del];
+        u32 msg_len_del   = message_boundaries[msg_idx_del + 1] - msg_start_del;
+
+        /* 使用 memmove 将被删除消息之后的所有数据向前移动，覆盖它 */
+        memmove(out_buf + msg_start_del,
+                out_buf + msg_start_del + msg_len_del,
+                temp_len - (msg_start_del + msg_len_del));
+
+        /* 更新缓冲区的总长度 */
+        temp_len -= msg_len_del;
+
+        break;
+      }
+
+      /* MSG_DUPLICATE: 复制一个完整的消息 */
+      case 8: {
+
+        /* 只有在有消息可复制时才执行 */
+        if (temp_len < 1 || M2_region_count < 1) break;
+
+        /* 随机选择要复制的消息 */
+        u32 msg_idx_dup = UR(M2_region_count);
+        u32 msg_start_dup = message_boundaries[msg_idx_dup];
+        u32 msg_len_dup   = message_boundaries[msg_idx_dup + 1] - msg_start_dup;
+
+        /* 检查复制后是否会超出最大文件大小限制 */
+        if (temp_len + msg_len_dup >= MAX_FILE) break;
+
+        /* 随机选择一个插入点（可以在任何两条消息之间，包括开头和结尾）*/
+        u32 insert_at_msg_idx = UR(M2_region_count + 1);
+        u32 insert_offset     = message_boundaries[insert_at_msg_idx];
+
+        /* 创建一个新的、更大的缓冲区 */
+        u8* new_buf = ck_alloc_nozero(temp_len + msg_len_dup);
+
+        /* 1. 拷贝插入点之前的数据 */
+        memcpy(new_buf, out_buf, insert_offset);
+
+        /* 2. 拷贝被复制的消息到插入点 */
+        memcpy(new_buf + insert_offset, out_buf + msg_start_dup, msg_len_dup);
+
+        /* 3. 拷贝插入点之后的数据 */
+        memcpy(new_buf + insert_offset + msg_len_dup,
+                out_buf + insert_offset,
+                temp_len - insert_offset);
+
+        /* 释放旧缓冲区，用新缓冲区取而代之 */
+        ck_free(out_buf);
+        out_buf = new_buf;
+
+        /* 更新缓冲区的总长度 */
+        temp_len += msg_len_dup;
+
+        break;
+      }
+      /*******************************************************
+      *                        结束新增代码                     *
+      *******************************************************/
+
+      /*******************************************************
+       * 新增变异算子: 消息交换 (MSG_SWAP)          *
+       *******************************************************/
+      case 9: {
+        /* 前提条件：必须至少有两条消息才能交换 */
+        if (M2_region_count < 2) break;
+
+        u32 msg_idx1, msg_idx2;
+        u32 start1, len1, start2, len2;
+        u8* new_buf;
+        u32 intermediate_start, intermediate_len;
+
+        /* 1. 随机选择两个 *不同* 的消息索引 */
+        msg_idx1 = UR(M2_region_count);
+        do {
+          msg_idx2 = UR(M2_region_count);
+        } while (msg_idx1 == msg_idx2);
+
+        /* 2. 确保 idx1 < idx2 以简化逻辑 */
+        if (msg_idx1 > msg_idx2) {
+          u32 tmp = msg_idx1;
+          msg_idx1 = msg_idx2;
+          msg_idx2 = tmp;
+        }
+
+        /* 3. 获取两条消息的边界和它们之间数据的边界 */
+        start1 = message_boundaries[msg_idx1];
+        len1   = message_boundaries[msg_idx1 + 1] - start1;
+
+        start2 = message_boundaries[msg_idx2];
+        len2   = message_boundaries[msg_idx2 + 1] - start2;
+
+        intermediate_start = start1 + len1;
+        intermediate_len = start2 - intermediate_start;
+
+        /* 4. 创建一个新缓冲区来执行交换，这是处理不同长度消息交换最安全的方法 */
+        new_buf = ck_alloc_nozero(temp_len);
+
+        /* 5. 按新的顺序分段拷贝数据 */
+        // Part A: 第一条消息之前的所有数据
+        memcpy(new_buf, out_buf, start1);
+
+        // Part B: 将 *第二条* 消息拷贝到第一条的位置
+        memcpy(new_buf + start1, out_buf + start2, len2);
+
+        // Part C: 拷贝两条消息之间的所有数据
+        memcpy(new_buf + start1 + len2, out_buf + intermediate_start, intermediate_len);
+
+        // Part D: 将 *第一条* 消息拷贝到第二条的位置
+        memcpy(new_buf + start1 + len2 + intermediate_len, out_buf + start1, len1);
+
+        // Part E: 第二条消息之后的所有数据
+        memcpy(new_buf + start1 + len2 + intermediate_len + len1,
+               out_buf + start2 + len2,
+               temp_len - (start2 + len2));
+
+        // 【BUG修正】原代码这里计算有误，可能导致越界读取
+        u32 tail_start = start2 + len2;
+        u32 tail_len = temp_len - tail_start;
+        u32 tail_dest_start = start1 + len2 + intermediate_len + len1;
+
+        memcpy(new_buf + tail_dest_start, out_buf + tail_start, tail_len);
+
+        /* 6. 替换旧缓冲区 */
+        ck_free(out_buf);
+        out_buf = new_buf;
+
+        /* 总长度不变 */
+        break;
+      }
+
+      /*******************************************************
+      * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
+      *******************************************************/
+      case 10: {
+        /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
+        if (M2_region_count < 1 || temp_len < 2) break;
+
+        u32 msg_to_split_idx, msg_to_insert_idx;
+        u32 split_start, split_len, split_offset_in_msg;
+        u32 insert_start, insert_len;
+        u8 *new_buf;
+
+        /* 1. 随机选择一条消息进行分裂 */
+        msg_to_split_idx = UR(M2_region_count);
+        split_start = message_boundaries[msg_to_split_idx];
+        split_len = message_boundaries[msg_to_split_idx + 1] - split_start;
+
+        if (split_len < 2)
+          break; // 长度为1的消息无法分裂
+
+        /* 2. 随机选择另一条消息作为插入内容 (可以是同一条) */
+        msg_to_insert_idx = UR(M2_region_count);
+        insert_start = message_boundaries[msg_to_insert_idx];
+        insert_len = message_boundaries[msg_to_insert_idx + 1] - insert_start;
+
+        /* 3. 检查变异后是否会超出文件大小限制 */
+        if (temp_len + insert_len >= MAX_FILE)
+          break;
+
+        /* 4. 确定在消息内部的分裂点 (1 到 len-1) */
+        split_offset_in_msg = 1 + UR(split_len - 1);
+
+        /* 5. 创建新缓冲区 */
+        u32 new_len = temp_len + insert_len;
+        new_buf = ck_alloc_nozero(new_len);
+
+        /* 6. 分段拷贝 */
+        // Part A: 拷贝到分裂点(包含)
+        u32 split_point_abs = split_start + split_offset_in_msg;
+
+        memcpy(new_buf, out_buf, split_point_abs);
+
+        // Part B: 在分裂点插入选定的消息内容
+        memcpy(new_buf + split_point_abs, out_buf + insert_start, insert_len);
+
+        // Part C: 拷贝原缓冲区剩余的部分
+        memcpy(new_buf + split_point_abs + insert_len,
+               out_buf + split_point_abs,
+               temp_len - split_point_abs);
+
+        /* 7. 替换旧缓冲区并更新长度 */
+        ck_free(out_buf);
+        out_buf = new_buf;
+        temp_len += insert_len;
+
+        break;
+      }
+  }
+}
+
+    // for (i = 0; i < use_stacking; i++) {
+
+    //   switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + \
+    //        (M2_region_count > 1 ? 2 : 0) + \
+    //        (M2_region_count >= 2 ? 2 : 0) + /* +2 for MSG_SWAP and MSG_OVERWRITE */ \
+    //        (M2_region_count >= 1 && temp_len > 1 ? 1 : 0))) {  /* +1 for MSG_SPLICE_OP */
+
+    //   // switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (M2_region_count > 1 ? 2 : 0))) {
+
+    //     case 0:
+
+    //       /* Flip a single bit somewhere. Spooky! */
+
+    //       FLIP_BIT(out_buf, UR(temp_len << 3));
+    //       break;
+
+    //     case 1:
+
+    //       /* Set byte to interesting value. */
+
+    //       out_buf[UR(temp_len)] = interesting_8[UR(sizeof(interesting_8))];
+    //       break;
+
+    //     case 2:
+
+    //       /* Set word to interesting value, randomly choosing endian. */
+
+    //       if (temp_len < 2) break;
+
+    //       if (UR(2)) {
+
+    //         *(u16*)(out_buf + UR(temp_len - 1)) =
+    //           interesting_16[UR(sizeof(interesting_16) >> 1)];
+
+    //       } else {
+
+    //         *(u16*)(out_buf + UR(temp_len - 1)) = SWAP16(
+    //           interesting_16[UR(sizeof(interesting_16) >> 1)]);
+
+    //       }
+
+    //       break;
+
+    //     case 3:
+
+    //       /* Set dword to interesting value, randomly choosing endian. */
+
+    //       if (temp_len < 4) break;
+
+    //       if (UR(2)) {
+
+    //         *(u32*)(out_buf + UR(temp_len - 3)) =
+    //           interesting_32[UR(sizeof(interesting_32) >> 2)];
+
+    //       } else {
+
+    //         *(u32*)(out_buf + UR(temp_len - 3)) = SWAP32(
+    //           interesting_32[UR(sizeof(interesting_32) >> 2)]);
+
+    //       }
+
+    //       break;
+
+    //     case 4:
+
+    //       /* Randomly subtract from byte. */
+
+    //       out_buf[UR(temp_len)] -= 1 + UR(ARITH_MAX);
+    //       break;
+
+    //     case 5:
+
+    //       /* Randomly add to byte. */
+
+    //       out_buf[UR(temp_len)] += 1 + UR(ARITH_MAX);
+    //       break;
+
+    //     case 6:
+
+    //       /* Randomly subtract from word, random endian. */
+
+    //       if (temp_len < 2) break;
+
+    //       if (UR(2)) {
+
+    //         u32 pos = UR(temp_len - 1);
+
+    //         *(u16*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
+
+    //       } else {
+
+    //         u32 pos = UR(temp_len - 1);
+    //         u16 num = 1 + UR(ARITH_MAX);
+
+    //         *(u16*)(out_buf + pos) =
+    //           SWAP16(SWAP16(*(u16*)(out_buf + pos)) - num);
+
+    //       }
+
+    //       break;
+
+    //     case 7:
+
+    //       /* Randomly add to word, random endian. */
+
+    //       if (temp_len < 2) break;
+
+    //       if (UR(2)) {
+
+    //         u32 pos = UR(temp_len - 1);
+
+    //         *(u16*)(out_buf + pos) += 1 + UR(ARITH_MAX);
+
+    //       } else {
+
+    //         u32 pos = UR(temp_len - 1);
+    //         u16 num = 1 + UR(ARITH_MAX);
+
+    //         *(u16*)(out_buf + pos) =
+    //           SWAP16(SWAP16(*(u16*)(out_buf + pos)) + num);
+
+    //       }
+
+    //       break;
+
+    //     case 8:
+
+    //       /* Randomly subtract from dword, random endian. */
+
+    //       if (temp_len < 4) break;
+
+    //       if (UR(2)) {
+
+    //         u32 pos = UR(temp_len - 3);
+
+    //         *(u32*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
+
+    //       } else {
+
+    //         u32 pos = UR(temp_len - 3);
+    //         u32 num = 1 + UR(ARITH_MAX);
+
+    //         *(u32*)(out_buf + pos) =
+    //           SWAP32(SWAP32(*(u32*)(out_buf + pos)) - num);
+
+    //       }
+
+    //       break;
+
+    //     case 9:
+
+    //       /* Randomly add to dword, random endian. */
+
+    //       if (temp_len < 4) break;
+
+    //       if (UR(2)) {
+
+    //         u32 pos = UR(temp_len - 3);
+
+    //         *(u32*)(out_buf + pos) += 1 + UR(ARITH_MAX);
+
+    //       } else {
+
+    //         u32 pos = UR(temp_len - 3);
+    //         u32 num = 1 + UR(ARITH_MAX);
+
+    //         *(u32*)(out_buf + pos) =
+    //           SWAP32(SWAP32(*(u32*)(out_buf + pos)) + num);
+
+    //       }
+
+    //       break;
+
+    //     case 10:
+
+    //       /* Just set a random byte to a random value. Because,
+    //          why not. We use XOR with 1-255 to eliminate the
+    //          possibility of a no-op. */
+
+    //       out_buf[UR(temp_len)] ^= 1 + UR(255);
+    //       break;
+
+    //     case 11 ... 12: {
+
+    //         /* Delete bytes. We're making this a bit more likely
+    //            than insertion (the next option) in hopes of keeping
+    //            files reasonably small. */
+
+    //         u32 del_from, del_len;
+
+    //         if (temp_len < 2) break;
+
+    //         /* Don't delete too much. */
+
+    //         del_len = choose_block_len(temp_len - 1);
+
+    //         del_from = UR(temp_len - del_len + 1);
+
+    //         memmove(out_buf + del_from, out_buf + del_from + del_len,
+    //                 temp_len - del_from - del_len);
+
+    //         temp_len -= del_len;
+
+    //         break;
+
+    //       }
+
+    //     case 13:
+
+    //       if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
+
+    //         /* Clone bytes (75%) or insert a block of constant bytes (25%). */
+
+    //         u8  actually_clone = UR(4);
+    //         u32 clone_from, clone_to, clone_len;
+    //         u8* new_buf;
+
+    //         if (actually_clone) {
+
+    //           clone_len  = choose_block_len(temp_len);
+    //           clone_from = UR(temp_len - clone_len + 1);
+
+    //         } else {
+
+    //           clone_len = choose_block_len(HAVOC_BLK_XL);
+    //           clone_from = 0;
+
+    //         }
+
+    //         clone_to   = UR(temp_len);
+
+    //         new_buf = ck_alloc_nozero(temp_len + clone_len);
+
+    //         /* Head */
+
+    //         memcpy(new_buf, out_buf, clone_to);
+
+    //         /* Inserted part */
+
+    //         if (actually_clone)
+    //           memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
+    //         else
+    //           memset(new_buf + clone_to,
+    //                  UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
+
+    //         /* Tail */
+    //         memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
+    //                temp_len - clone_to);
+
+    //         ck_free(out_buf);
+    //         out_buf = new_buf;
+    //         temp_len += clone_len;
+
+    //       }
+
+    //       break;
+
+    //     case 14: {
+
+    //         /* Overwrite bytes with a randomly selected chunk (75%) or fixed
+    //            bytes (25%). */
+
+    //         u32 copy_from, copy_to, copy_len;
+
+    //         if (temp_len < 2) break;
+
+    //         copy_len  = choose_block_len(temp_len - 1);
+
+    //         copy_from = UR(temp_len - copy_len + 1);
+    //         copy_to   = UR(temp_len - copy_len + 1);
+
+    //         if (UR(4)) {
+
+    //           if (copy_from != copy_to)
+    //             memmove(out_buf + copy_to, out_buf + copy_from, copy_len);
+
+    //         } else memset(out_buf + copy_to,
+    //                       UR(2) ? UR(256) : out_buf[UR(temp_len)], copy_len);
+
+    //         break;
+
+    //       }
+
+    //     /* Values 15 and 16 can be selected only if there are any extras
+    //        present in the dictionaries. */
+
+    //     case 15: {
+    //         if (extras_cnt + a_extras_cnt == 0) break;
+
+    //         /* Overwrite bytes with an extra. */
+
+    //         if (!extras_cnt || (a_extras_cnt && UR(2))) {
+
+    //           /* No user-specified extras or odds in our favor. Let's use an
+    //              auto-detected one. */
+
+    //           u32 use_extra = UR(a_extras_cnt);
+    //           u32 extra_len = a_extras[use_extra].len;
+    //           u32 insert_at;
+
+    //           if (extra_len > temp_len) break;
+
+    //           insert_at = UR(temp_len - extra_len + 1);
+    //           memcpy(out_buf + insert_at, a_extras[use_extra].data, extra_len);
+
+    //         } else {
+
+    //           /* No auto extras or odds in our favor. Use the dictionary. */
+
+    //           u32 use_extra = UR(extras_cnt);
+    //           u32 extra_len = extras[use_extra].len;
+    //           u32 insert_at;
+
+    //           if (extra_len > temp_len) break;
+
+    //           insert_at = UR(temp_len - extra_len + 1);
+    //           memcpy(out_buf + insert_at, extras[use_extra].data, extra_len);
+
+    //         }
+
+    //         break;
+
+    //       }
+
+    //     case 16: {
+    //         if (extras_cnt + a_extras_cnt == 0) break;
+
+    //         u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
+    //         u8* new_buf;
+
+    //         /* Insert an extra. Do the same dice-rolling stuff as for the
+    //            previous case. */
+
+    //         if (!extras_cnt || (a_extras_cnt && UR(2))) {
+
+    //           use_extra = UR(a_extras_cnt);
+    //           extra_len = a_extras[use_extra].len;
+
+    //           if (temp_len + extra_len >= MAX_FILE) break;
+
+    //           new_buf = ck_alloc_nozero(temp_len + extra_len);
+
+    //           /* Head */
+    //           memcpy(new_buf, out_buf, insert_at);
+
+    //           /* Inserted part */
+    //           memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
+
+    //         } else {
+
+    //           use_extra = UR(extras_cnt);
+    //           extra_len = extras[use_extra].len;
+
+    //           if (temp_len + extra_len >= MAX_FILE) break;
+
+    //           new_buf = ck_alloc_nozero(temp_len + extra_len);
+
+    //           /* Head */
+    //           memcpy(new_buf, out_buf, insert_at);
+
+    //           /* Inserted part */
+    //           memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
+
+    //         }
+
+    //         /* Tail */
+    //         memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
+    //                temp_len - insert_at);
+
+    //         ck_free(out_buf);
+    //         out_buf   = new_buf;
+    //         temp_len += extra_len;
+
+    //         break;
+
+    //       }
+    //     /* Values 17 to 20 can be selected only if region-level mutations are enabled */
+
+    //     /* Replace the current region with a random region from a random seed */
+    //     case 17: {
+    //         u32 src_region_len = 0;
+    //         u8* new_buf = choose_source_region(&src_region_len);
+    //         if (new_buf == NULL) break;
+
+    //         //replace the current region
+    //         ck_free(out_buf);
+    //         out_buf = new_buf;
+    //         temp_len = src_region_len;
+    //         break;
+    //       }
+
+    //     /* Insert a random region from a random seed to the beginning of the current region */
+    //     case 18: {
+    //         u32 src_region_len = 0;
+    //         u8* src_region = choose_source_region(&src_region_len);
+    //         if (src_region == NULL) break;
+
+    //         if (temp_len + src_region_len >= MAX_FILE) {
+    //           ck_free(src_region);
+    //           break;
+    //         }
+
+    //         u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
+
+    //         memcpy(new_buf, src_region, src_region_len);
+
+    //         memcpy(&new_buf[src_region_len], out_buf, temp_len);
+
+    //         ck_free(out_buf);
+    //         ck_free(src_region);
+    //         out_buf = new_buf;
+    //         temp_len += src_region_len;
+    //         break;
+    //       }
+
+    //     /* Insert a random region from a random seed to the end of the current region */
+    //     case 19: {
+    //         u32 src_region_len = 0;
+    //         u8* src_region = choose_source_region(&src_region_len);
+    //         if (src_region == NULL) break;
+
+    //         if (temp_len + src_region_len >= MAX_FILE) {
+    //           ck_free(src_region);
+    //           break;
+    //         }
+
+    //         u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
+
+    //         memcpy(new_buf, out_buf, temp_len);
+
+    //         memcpy(&new_buf[temp_len], src_region, src_region_len);
+
+    //         ck_free(out_buf);
+    //         ck_free(src_region);
+    //         out_buf = new_buf;
+    //         temp_len += src_region_len;
+    //         break;
+    //       }
+
+    //     /* Duplicate the current region */
+    //     case 20: {
+    //         if (temp_len * 2 >= MAX_FILE) break;
+
+    //         u8* new_buf = ck_alloc_nozero(temp_len * 2);
+
+    //         memcpy(new_buf, out_buf, temp_len);
+
+    //         memcpy(&new_buf[temp_len], out_buf, temp_len);
+
+    //         ck_free(out_buf);
+    //         out_buf = new_buf;
+    //         temp_len += temp_len;
+    //         break;
+    //       }
+
+    //       /*******************************************************
+    //      * 新增代码: 结构感知的变异算子 (MODIFIED CODE) *
+    //      *******************************************************/
+
+    //     /* MSG_DELETE: 删除一个完整的消息 */
+    //     case 21: {
+
+    //       /* 只有在至少有两条消息时，删除才有意义 */
+    //       if (temp_len < 2 || M2_region_count < 2) break;
+
+    //       /* 随机选择要删除的消息索引 */
+    //       u32 msg_idx_del = UR(M2_region_count - 1);
+
+    //       /* 获取该消息的边界和长度 */
+    //       u32 msg_start_del = message_boundaries[msg_idx_del];
+    //       u32 msg_len_del   = message_boundaries[msg_idx_del + 1] - msg_start_del;
+
+    //       /* 使用 memmove 将被删除消息之后的所有数据向前移动，覆盖它 */
+
+    //       printf("================ DEBUG INFO ================\n");
+    //       printf("temp_len        = %u\n", temp_len);
+    //       printf("M2_region_count = %u\n", M2_region_count);
+    //       printf("msg_idx_del     = %u\n", msg_idx_del);
+    //       printf("msg_start_del   = %u\n", msg_start_del);
+    //       printf("msg_len_del     = %u\n", msg_len_del);
+    //       printf("==========================================\n");
+    //       fflush(stdout);
+
+    //       memmove(out_buf + msg_start_del,
+    //               out_buf + msg_start_del + msg_len_del,
+    //               temp_len - (msg_start_del + msg_len_del));
+
+    //       /* 更新缓冲区的总长度 */
+    //       temp_len -= msg_len_del;
+
+    //       break;
+    //     }
+
+    //     /* MSG_DUPLICATE: 复制一个完整的消息 */
+    //     case 22: {
+
+    //       /* 只有在有消息可复制时才执行 */
+    //       if (temp_len < 1 || M2_region_count < 1) break;
+
+    //       /* 随机选择要复制的消息 */
+    //       u32 msg_idx_dup = UR(M2_region_count);
+    //       u32 msg_start_dup = message_boundaries[msg_idx_dup];
+    //       u32 msg_len_dup   = message_boundaries[msg_idx_dup + 1] - msg_start_dup;
+
+    //       /* 检查复制后是否会超出最大文件大小限制 */
+    //       if (temp_len + msg_len_dup >= MAX_FILE) break;
+
+    //       /* 随机选择一个插入点（可以在任何两条消息之间，包括开头和结尾）*/
+    //       u32 insert_at_msg_idx = UR(M2_region_count + 1);
+    //       u32 insert_offset     = message_boundaries[insert_at_msg_idx];
+
+    //       /* 创建一个新的、更大的缓冲区 */
+    //       u8* new_buf = ck_alloc_nozero(temp_len + msg_len_dup);
+
+    //       /* 1. 拷贝插入点之前的数据 */
+    //       memcpy(new_buf, out_buf, insert_offset);
+
+    //       /* 2. 拷贝被复制的消息到插入点 */
+    //       memcpy(new_buf + insert_offset, out_buf + msg_start_dup, msg_len_dup);
+
+    //       /* 3. 拷贝插入点之后的数据 */
+    //       memcpy(new_buf + insert_offset + msg_len_dup,
+    //              out_buf + insert_offset,
+    //              temp_len - insert_offset);
+
+    //       /* 释放旧缓冲区，用新缓冲区取而代之 */
+    //       ck_free(out_buf);
+    //       out_buf = new_buf;
+
+    //       /* 更新缓冲区的总长度 */
+    //       temp_len += msg_len_dup;
+
+    //       break;
+    //     }
+    //    /*******************************************************
+    //     *                        结束新增代码                     *
+    //     *******************************************************/
+
+    //     /*******************************************************
+    //      * 新增变异算子: 消息交换 (MSG_SWAP)          *
+    //      *******************************************************/
+    //     case 23: {
+    //       /* 前提条件：必须至少有两条消息才能交换 */
+    //       if (M2_region_count < 2) break;
+
+    //       u32 msg_idx1, msg_idx2;
+    //       u32 start1, len1, start2, len2;
+    //       u8* new_buf;
+    //       u32 intermediate_start, intermediate_len;
+
+    //       /* 1. 随机选择两个 *不同* 的消息索引 */
+    //       msg_idx1 = UR(M2_region_count);
+    //       do {
+    //         msg_idx2 = UR(M2_region_count);
+    //       } while (msg_idx1 == msg_idx2);
+
+    //       /* 2. 确保 idx1 < idx2 以简化逻辑 */
+    //       if (msg_idx1 > msg_idx2) {
+    //         u32 tmp = msg_idx1;
+    //         msg_idx1 = msg_idx2;
+    //         msg_idx2 = tmp;
+    //       }
+
+    //       /* 3. 获取两条消息的边界和它们之间数据的边界 */
+    //       start1 = message_boundaries[msg_idx1];
+    //       len1   = message_boundaries[msg_idx1 + 1] - start1;
+
+    //       start2 = message_boundaries[msg_idx2];
+    //       len2   = message_boundaries[msg_idx2 + 1] - start2;
+
+    //       intermediate_start = start1 + len1;
+    //       intermediate_len = start2 - intermediate_start;
+
+    //       assert(start1 + len1 <= temp_len);
+    //       assert(start2 + len2 <= temp_len);
+    //       assert(intermediate_start + intermediate_len <= temp_len);
+
+    //       /* 4. 创建一个新缓冲区来执行交换，这是处理不同长度消息交换最安全的方法 */
+    //       new_buf = ck_alloc_nozero(temp_len);
+
+    //       /* 5. 按新的顺序分段拷贝数据 */
+    //       // Part A: 第一条消息之前的所有数据
+    //       memcpy(new_buf, out_buf, start1);
+
+    //       // Part B: 将 *第二条* 消息拷贝到第一条的位置
+    //       memcpy(new_buf + start1, out_buf + start2, len2);
+
+    //       // Part C: 拷贝两条消息之间的所有数据
+    //       memcpy(new_buf + start1 + len2, out_buf + intermediate_start, intermediate_len);
+
+    //       // Part D: 将 *第一条* 消息拷贝到第二条的位置
+    //       memcpy(new_buf + start1 + len2 + intermediate_len, out_buf + start1, len1);
+
+    //       // Part E: 第二条消息之后的所有数据
+    //       // memcpy(new_buf + start1 + len2 + intermediate_len + len1,
+    //       //        out_buf + start2 + len2,
+    //       //        temp_len - (start2 + len2));
+
+    //       // 【BUG修正】原代码这里计算有误，可能导致越界读取
+    //       u32 tail_start = start2 + len2;
+    //       u32 tail_len = temp_len - tail_start;
+    //       u32 tail_dest_start = start1 + len2 + intermediate_len + len1;
+
+    //       // 断言检查写入和读取的最后位置
+    //       assert(tail_dest_start + tail_len <= temp_len);
+    //       assert(tail_start + tail_len <= temp_len);
+
+    //       memcpy(new_buf + tail_dest_start, out_buf + tail_start, tail_len);
+
+    //       /* 6. 替换旧缓冲区 */
+    //       ck_free(out_buf);
+    //       out_buf = new_buf;
+
+    //       // /* 7. 强制结束当前的堆叠变异循环，因为缓冲区结构已改变 */
+    //       // i = use_stacking;
+
+    //       printf(">>> FINISHED CASE 23 (SWAP) <<<\n");
+    //       fflush(stdout);
+
+    //       /* 总长度不变 */
+    //       break;
+    //     }
+
+    //     /*******************************************************
+    //      * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
+    //      *******************************************************/
+    //     case 24: {
+    //       /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
+    //       if (M2_region_count < 1 || temp_len < 2) break;
+
+    //       printf(">>> STARTING CASE 24 (SPLICE) <<<\n");
+    //       fflush(stdout);
+
+    //       u32 msg_to_split_idx, msg_to_insert_idx;
+    //       u32 split_start, split_len, split_offset_in_msg;
+    //       u32 insert_start, insert_len;
+    //       u8* new_buf;
+
+    //       /* 1. 随机选择一条消息进行分裂 */
+    //       msg_to_split_idx = UR(M2_region_count);
+    //       split_start = message_boundaries[msg_to_split_idx];
+    //       split_len   = message_boundaries[msg_to_split_idx + 1] - split_start;
+
+    //       if (split_len < 2) break; // 长度为1的消息无法分裂
+
+    //       /* 2. 随机选择另一条消息作为插入内容 (可以是同一条) */
+    //       msg_to_insert_idx = UR(M2_region_count);
+    //       insert_start = message_boundaries[msg_to_insert_idx];
+    //       insert_len   = message_boundaries[msg_to_insert_idx + 1] - insert_start;
+
+    //       /* 3. 检查变异后是否会超出文件大小限制 */
+    //       if (temp_len + insert_len >= MAX_FILE) break;
+
+    //       /* 4. 确定在消息内部的分裂点 (1 到 len-1) */
+    //       split_offset_in_msg = 1 + UR(split_len - 1);
+
+    //       /* 5. 创建新缓冲区 */
+    //       u32 new_len = temp_len + insert_len;
+    //       new_buf = ck_alloc_nozero(new_len);
+
+    //       /* 6. 分段拷贝 */
+    //       // Part A: 拷贝到分裂点(包含)
+    //       u32 split_point_abs = split_start + split_offset_in_msg;
+
+    //       // 断言检查
+    //       assert(split_point_abs <= temp_len);
+    //       assert(insert_start + insert_len <= temp_len);
+    //       assert(split_point_abs + insert_len + (temp_len - split_point_abs) <= new_len);
+
+    //       memcpy(new_buf, out_buf, split_point_abs);
+
+    //       // Part B: 在分裂点插入选定的消息内容
+    //       memcpy(new_buf + split_point_abs, out_buf + insert_start, insert_len);
+
+    //       // Part C: 拷贝原缓冲区剩余的部分
+    //       memcpy(new_buf + split_point_abs + insert_len,
+    //              out_buf + split_point_abs,
+    //              temp_len - split_point_abs);
+
+    //       /* 7. 替换旧缓冲区并更新长度 */
+    //       ck_free(out_buf);
+    //       out_buf = new_buf;
+    //       temp_len += insert_len;
+
+    //       // /* 8. 强制结束当前的堆叠变异循环，因为缓冲区结构已改变 */
+    //       // i = use_stacking;
+
+    //       printf(">>> FINISHED CASE 24 (SPLICE) <<<\n");
+    //       fflush(stdout);
+
+    //       break;
+    //     }
+
+    //     // /*******************************************************
+    //     //  * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
+    //     //  *******************************************************/
+    //     case 25: {
+    //       /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
+    //       if (M2_region_count < 2) break;
+
+    //       printf(">>> RUNNING CASE 25 (OVERWRITE) <<<\n");
+    //       fflush(stdout);
+
+    //       u32 target_idx, src_idx;
+    //       u32 target_start, target_len;
+    //       u32 src_start, src_len;
+
+    //       /* 1. 随机选择源消息和目标消息 */
+    //       target_idx = UR(M2_region_count);
+    //       do {
+    //         src_idx = UR(M2_region_count);
+    //       } while (target_idx == src_idx);
+
+    //       target_start = message_boundaries[target_idx];
+    //       target_len   = message_boundaries[target_idx + 1] - target_start;
+
+    //       src_start = message_boundaries[src_idx];
+    //       src_len   = message_boundaries[src_idx + 1] - src_start;
+
+    //       /* 2. 将源消息的内容覆盖到目标消息的位置 */
+    //       /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
+    //       u32 overwrite_len = MIN(target_len, src_len);
+    //       if (overwrite_len > 0) {
+    //         memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
+    //       }
+
+    //       /* 缓冲区总长度不变 */
+    //       break;
+    //     }
+
+    //   }
+
+    // }
 
     if (common_fuzz_stuff(argv, out_buf, temp_len))
       goto abandon_entry;
@@ -8314,33 +9288,37 @@ havoc_stage:
     /* out_buf might have been mangled a bit, so let's restore it to its
        original size and shape. */
 
-    if (temp_len < len) out_buf = ck_realloc(out_buf, len);
+    if (temp_len < len)
+      out_buf = ck_realloc(out_buf, len);
     temp_len = len;
     memcpy(out_buf, in_buf, len);
 
     /* If we're finding new stuff, let's run for a bit longer, limits
        permitting. */
 
-    if (queued_paths != havoc_queued) {
+    if (queued_paths != havoc_queued)
+    {
 
-      if (perf_score <= HAVOC_MAX_MULT * 100) {
-        stage_max  *= 2;
+      if (perf_score <= HAVOC_MAX_MULT * 100)
+      {
+        stage_max *= 2;
         perf_score *= 2;
       }
 
       havoc_queued = queued_paths;
-
     }
-
   }
 
   new_hit_cnt = queued_paths + unique_crashes;
 
-  if (!splice_cycle) {
-    stage_finds[STAGE_HAVOC]  += new_hit_cnt - orig_hit_cnt;
+  if (!splice_cycle)
+  {
+    stage_finds[STAGE_HAVOC] += new_hit_cnt - orig_hit_cnt;
     stage_cycles[STAGE_HAVOC] += stage_max;
-  } else {
-    stage_finds[STAGE_SPLICE]  += new_hit_cnt - orig_hit_cnt;
+  }
+  else
+  {
+    stage_finds[STAGE_SPLICE] += new_hit_cnt - orig_hit_cnt;
     stage_cycles[STAGE_SPLICE] += stage_max;
   }
 
@@ -8358,17 +9336,19 @@ havoc_stage:
 retry_splicing:
 
   if (use_splicing && splice_cycle++ < SPLICE_CYCLES &&
-      queued_paths > 1 && M2_len > 1) {
+      queued_paths > 1 && M2_len > 1)
+  {
 
-    struct queue_entry* target;
+    struct queue_entry *target;
     u32 tid, split_at;
-    u8* new_buf;
+    u8 *new_buf;
     s32 f_diff, l_diff;
 
     /* First of all, if we've modified in_buf for havoc, let's clean that
        up... */
 
-    if (in_buf != orig_in) {
+    if (in_buf != orig_in)
+    {
       ck_free(in_buf);
       in_buf = orig_in;
       len = M2_len;
@@ -8376,28 +9356,39 @@ retry_splicing:
 
     /* Pick a random queue entry and seek to it. Don't splice with yourself. */
 
-    do { tid = UR(queued_paths); } while (tid == current_entry);
+    do
+    {
+      tid = UR(queued_paths);
+    } while (tid == current_entry);
 
     splicing_with = tid;
     target = queue;
 
-    while (tid >= 100) { target = target->next_100; tid -= 100; }
-    while (tid--) target = target->next;
+    while (tid >= 100)
+    {
+      target = target->next_100;
+      tid -= 100;
+    }
+    while (tid--)
+      target = target->next;
 
     /* Make sure that the target has a reasonable length. */
 
-    while (target && (target->len < 2 || target == queue_cur)) {
+    while (target && (target->len < 2 || target == queue_cur))
+    {
       target = target->next;
       splicing_with++;
     }
 
-    if (!target) goto retry_splicing;
+    if (!target)
+      goto retry_splicing;
 
     /* Read the testcase into a new buffer. */
 
     fd = open(target->fname, O_RDONLY);
 
-    if (fd < 0) PFATAL("Unable to open '%s'", target->fname);
+    if (fd < 0)
+      PFATAL("Unable to open '%s'", target->fname);
 
     new_buf = ck_alloc_nozero(target->len);
 
@@ -8411,7 +9402,8 @@ retry_splicing:
 
     locate_diffs(in_buf, new_buf, MIN(len, target->len), &f_diff, &l_diff);
 
-    if (f_diff < 0 || l_diff < 2 || f_diff == l_diff) {
+    if (f_diff < 0 || l_diff < 2 || f_diff == l_diff)
+    {
       ck_free(new_buf);
       goto retry_splicing;
     }
@@ -8431,7 +9423,6 @@ retry_splicing:
     memcpy(out_buf, in_buf, len);
 
     goto havoc_stage;
-
   }
 
 #endif /* !IGNORE_FINDS */
@@ -8445,25 +9436,29 @@ abandon_entry:
   /* Update pending_not_fuzzed count if we made it through the calibration
      cycle and have not seen this entry before. */
 
-  if (!stop_soon && !queue_cur->cal_failed && !queue_cur->was_fuzzed) {
+  if (!stop_soon && !queue_cur->cal_failed && !queue_cur->was_fuzzed)
+  {
     queue_cur->was_fuzzed = 1;
     was_fuzzed_map[get_state_index(target_state_id)][queue_cur->index] = 1;
     pending_not_fuzzed--;
-    if (queue_cur->favored) pending_favored--;
+    if (queue_cur->favored)
+      pending_favored--;
   }
 
   /*******************************************************
    * 新增代码: 释放消息边界数组的内存 (MODIFIED CODE) *
    *******************************************************/
-  if (message_boundaries) ck_free(message_boundaries);
+  if (message_boundaries)
+    ck_free(message_boundaries);
   /*******************************************************
    *                        结束新增代码                     *
    *******************************************************/
 
-  //munmap(orig_in, queue_cur->len);
+  // munmap(orig_in, queue_cur->len);
   ck_free(orig_in);
 
-  if (in_buf != orig_in) ck_free(in_buf);
+  if (in_buf != orig_in)
+    ck_free(in_buf);
   ck_free(out_buf);
   ck_free(eff_map);
 
@@ -8472,32 +9467,33 @@ abandon_entry:
   return ret_val;
 
 #undef FLIP_BIT
-
 }
-
 
 /* Grab interesting test cases from other fuzzers. */
 
-static void sync_fuzzers(char** argv) {
+static void sync_fuzzers(char **argv)
+{
 
-  DIR* sd;
-  struct dirent* sd_ent;
+  DIR *sd;
+  struct dirent *sd_ent;
   u32 sync_cnt = 0;
 
   sd = opendir(sync_dir);
-  if (!sd) PFATAL("Unable to open '%s'", sync_dir);
+  if (!sd)
+    PFATAL("Unable to open '%s'", sync_dir);
 
   stage_max = stage_cur = 0;
   cur_depth = 0;
 
   /* Look at the entries created for every other fuzzer in the sync directory. */
 
-  while ((sd_ent = readdir(sd))) {
+  while ((sd_ent = readdir(sd)))
+  {
 
     static u8 stage_tmp[128];
 
-    DIR* qd;
-    struct dirent* qd_ent;
+    DIR *qd;
+    struct dirent *qd_ent;
     u8 *qd_path, *qd_synced_path;
     u32 min_accept = 0, next_min_accept;
 
@@ -8505,13 +9501,15 @@ static void sync_fuzzers(char** argv) {
 
     /* Skip dot files and our own output directory. */
 
-    if (sd_ent->d_name[0] == '.' || !strcmp(sync_id, sd_ent->d_name)) continue;
+    if (sd_ent->d_name[0] == '.' || !strcmp(sync_id, sd_ent->d_name))
+      continue;
 
     /* Skip anything that doesn't have a queue/ subdirectory. */
 
     qd_path = alloc_printf("%s/%s/queue", sync_dir, sd_ent->d_name);
 
-    if (!(qd = opendir(qd_path))) {
+    if (!(qd = opendir(qd_path)))
+    {
       ck_free(qd_path);
       continue;
     }
@@ -8522,7 +9520,8 @@ static void sync_fuzzers(char** argv) {
 
     id_fd = open(qd_synced_path, O_RDWR | O_CREAT, 0600);
 
-    if (id_fd < 0) PFATAL("Unable to create '%s'", qd_synced_path);
+    if (id_fd < 0)
+      PFATAL("Unable to create '%s'", qd_synced_path);
 
     if (read(id_fd, &min_accept, sizeof(u32)) > 0)
       lseek(id_fd, 0, SEEK_SET);
@@ -8533,21 +9532,23 @@ static void sync_fuzzers(char** argv) {
 
     sprintf(stage_tmp, "sync %u", ++sync_cnt);
     stage_name = stage_tmp;
-    stage_cur  = 0;
-    stage_max  = 0;
+    stage_cur = 0;
+    stage_max = 0;
 
     /* For every file queued by this fuzzer, parse ID and see if we have looked at
        it before; exec a test case if not. */
 
-    while ((qd_ent = readdir(qd))) {
+    while ((qd_ent = readdir(qd)))
+    {
 
-      u8* path;
+      u8 *path;
       s32 fd;
       struct stat st;
 
       if (qd_ent->d_name[0] == '.' ||
           sscanf(qd_ent->d_name, CASE_PREFIX "%06u", &syncing_case) != 1 ||
-          syncing_case < min_accept) continue;
+          syncing_case < min_accept)
+        continue;
 
       /* OK, sounds like a new one. Let's give it a try. */
 
@@ -8560,21 +9561,25 @@ static void sync_fuzzers(char** argv) {
 
       fd = open(path, O_RDONLY);
 
-      if (fd < 0) {
-         ck_free(path);
-         continue;
+      if (fd < 0)
+      {
+        ck_free(path);
+        continue;
       }
 
-      if (fstat(fd, &st)) PFATAL("fstat() failed");
+      if (fstat(fd, &st))
+        PFATAL("fstat() failed");
 
       /* Ignore zero-sized or oversized files. */
 
-      if (st.st_size && st.st_size <= MAX_FILE) {
+      if (st.st_size && st.st_size <= MAX_FILE)
+      {
 
-        u8  fault;
-        u8* mem = mmap(0, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        u8 fault;
+        u8 *mem = mmap(0, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 
-        if (mem == MAP_FAILED) PFATAL("Unable to mmap '%s'", path);
+        if (mem == MAP_FAILED)
+          PFATAL("Unable to mmap '%s'", path);
 
         /* See what happens. We rely on save_if_interesting() to catch major
            errors and save the test case. */
@@ -8588,7 +9593,8 @@ static void sync_fuzzers(char** argv) {
 
         fault = run_target(argv, exec_tmout);
 
-        if (stop_soon) return;
+        if (stop_soon)
+          return;
 
         /* AFLNet: set this flag to enable request extractions while adding new seed to the queue */
         corpus_read_or_sync = 2;
@@ -8606,13 +9612,12 @@ static void sync_fuzzers(char** argv) {
 
         munmap(mem, st.st_size);
 
-        if (!(stage_cur++ % stats_update_freq)) show_stats();
-
+        if (!(stage_cur++ % stats_update_freq))
+          show_stats();
       }
 
       ck_free(path);
       close(fd);
-
     }
 
     ck_write(id_fd, &next_min_accept, sizeof(u32), qd_synced_path);
@@ -8621,88 +9626,92 @@ static void sync_fuzzers(char** argv) {
     closedir(qd);
     ck_free(qd_path);
     ck_free(qd_synced_path);
-
   }
 
   closedir(sd);
-
 }
-
 
 /* Handle stop signal (Ctrl-C, etc). */
 
-static void handle_stop_sig(int sig) {
+static void handle_stop_sig(int sig)
+{
 
   stop_soon = 1;
 
-  if (child_pid > 0) kill(child_pid, SIGKILL);
-  if (forksrv_pid > 0) kill(forksrv_pid, SIGKILL);
-
+  if (child_pid > 0)
+    kill(child_pid, SIGKILL);
+  if (forksrv_pid > 0)
+    kill(forksrv_pid, SIGKILL);
 }
-
 
 /* Handle skip request (SIGUSR1). */
 
-static void handle_skipreq(int sig) {
+static void handle_skipreq(int sig)
+{
 
   skip_requested = 1;
-
 }
 
 /* Handle timeout (SIGALRM). */
 
-static void handle_timeout(int sig) {
+static void handle_timeout(int sig)
+{
 
-  if (child_pid > 0) {
+  if (child_pid > 0)
+  {
 
     child_timed_out = 1;
     kill(child_pid, SIGKILL);
-
-  } else if (child_pid == -1 && forksrv_pid > 0) {
+  }
+  else if (child_pid == -1 && forksrv_pid > 0)
+  {
 
     child_timed_out = 1;
     kill(forksrv_pid, SIGKILL);
-
   }
-
 }
-
 
 /* Do a PATH search and find target binary to see that it exists and
    isn't a shell script - a common and painful mistake. We also check for
    a valid ELF header and for evidence of AFL instrumentation. */
 
-EXP_ST void check_binary(u8* fname) {
+EXP_ST void check_binary(u8 *fname)
+{
 
-  u8* env_path = 0;
+  u8 *env_path = 0;
   struct stat st;
 
   s32 fd;
-  u8* f_data;
+  u8 *f_data;
   u32 f_len = 0;
 
   ACTF("Validating target binary...");
 
-  if (strchr(fname, '/') || !(env_path = getenv("PATH"))) {
+  if (strchr(fname, '/') || !(env_path = getenv("PATH")))
+  {
 
     target_path = ck_strdup(fname);
     if (stat(target_path, &st) || !S_ISREG(st.st_mode) ||
         !(st.st_mode & 0111) || (f_len = st.st_size) < 4)
       FATAL("Program '%s' not found or not executable", fname);
+  }
+  else
+  {
 
-  } else {
-
-    while (env_path) {
+    while (env_path)
+    {
 
       u8 *cur_elem, *delim = strchr(env_path, ':');
 
-      if (delim) {
+      if (delim)
+      {
 
         cur_elem = ck_alloc(delim - env_path + 1);
         memcpy(cur_elem, env_path, delim - env_path);
         delim++;
-
-      } else cur_elem = ck_strdup(env_path);
+      }
+      else
+        cur_elem = ck_strdup(env_path);
 
       env_path = delim;
 
@@ -8714,36 +9723,40 @@ EXP_ST void check_binary(u8* fname) {
       ck_free(cur_elem);
 
       if (!stat(target_path, &st) && S_ISREG(st.st_mode) &&
-          (st.st_mode & 0111) && (f_len = st.st_size) >= 4) break;
+          (st.st_mode & 0111) && (f_len = st.st_size) >= 4)
+        break;
 
       ck_free(target_path);
       target_path = 0;
-
     }
 
-    if (!target_path) FATAL("Program '%s' not found or not executable", fname);
-
+    if (!target_path)
+      FATAL("Program '%s' not found or not executable", fname);
   }
 
-  if (getenv("AFL_SKIP_BIN_CHECK")) return;
+  if (getenv("AFL_SKIP_BIN_CHECK"))
+    return;
 
   /* Check for blatant user errors. */
 
   if ((!strncmp(target_path, "/tmp/", 5) && !strchr(target_path + 5, '/')) ||
       (!strncmp(target_path, "/var/tmp/", 9) && !strchr(target_path + 9, '/')))
-     FATAL("Please don't keep binaries in /tmp or /var/tmp");
+    FATAL("Please don't keep binaries in /tmp or /var/tmp");
 
   fd = open(target_path, O_RDONLY);
 
-  if (fd < 0) PFATAL("Unable to open '%s'", target_path);
+  if (fd < 0)
+    PFATAL("Unable to open '%s'", target_path);
 
   f_data = mmap(0, f_len, PROT_READ, MAP_PRIVATE, fd, 0);
 
-  if (f_data == MAP_FAILED) PFATAL("Unable to mmap file '%s'", target_path);
+  if (f_data == MAP_FAILED)
+    PFATAL("Unable to mmap file '%s'", target_path);
 
   close(fd);
 
-  if (f_data[0] == '#' && f_data[1] == '!') {
+  if (f_data[0] == '#' && f_data[1] == '!')
+  {
 
     SAYF("\n" cLRD "[-] " cRST
          "Oops, the target binary looks like a shell script. Some build systems will\n"
@@ -8756,7 +9769,6 @@ EXP_ST void check_binary(u8* fname) {
          "    in a compiled language instead.\n");
 
     FATAL("Program '%s' is a shell script", target_path);
-
   }
 
 #ifndef __APPLE__
@@ -8772,7 +9784,8 @@ EXP_ST void check_binary(u8* fname) {
 #endif /* ^!__APPLE__ */
 
   if (!qemu_mode && !dumb_mode &&
-      !memmem(f_data, f_len, SHM_ENV_VAR, strlen(SHM_ENV_VAR) + 1)) {
+      !memmem(f_data, f_len, SHM_ENV_VAR, strlen(SHM_ENV_VAR) + 1))
+  {
 
     SAYF("\n" cLRD "[-] " cRST
          "Looks like the target binary is not instrumented! The fuzzer depends on\n"
@@ -8788,11 +9801,11 @@ EXP_ST void check_binary(u8* fname) {
          doc_path);
 
     FATAL("No instrumentation detected");
-
   }
 
   if (qemu_mode &&
-      memmem(f_data, f_len, SHM_ENV_VAR, strlen(SHM_ENV_VAR) + 1)) {
+      memmem(f_data, f_len, SHM_ENV_VAR, strlen(SHM_ENV_VAR) + 1))
+  {
 
     SAYF("\n" cLRD "[-] " cRST
          "This program appears to be instrumented with afl-gcc, but is being run in\n"
@@ -8800,118 +9813,126 @@ EXP_ST void check_binary(u8* fname) {
          "    slow and offer no practical benefits.\n");
 
     FATAL("Instrumentation found in -Q mode");
-
   }
 
   if (memmem(f_data, f_len, "libasan.so", 10) ||
-      memmem(f_data, f_len, "__msan_init", 11)) uses_asan = 1;
+      memmem(f_data, f_len, "__msan_init", 11))
+    uses_asan = 1;
 
   /* Detect persistent & deferred init signatures in the binary. */
 
-  if (memmem(f_data, f_len, PERSIST_SIG, strlen(PERSIST_SIG) + 1)) {
+  if (memmem(f_data, f_len, PERSIST_SIG, strlen(PERSIST_SIG) + 1))
+  {
 
     OKF(cPIN "Persistent mode binary detected.");
     setenv(PERSIST_ENV_VAR, "1", 1);
     persistent_mode = 1;
-
-  } else if (getenv("AFL_PERSISTENT")) {
+  }
+  else if (getenv("AFL_PERSISTENT"))
+  {
 
     WARNF("AFL_PERSISTENT is no longer supported and may misbehave!");
-
   }
 
-  if (memmem(f_data, f_len, DEFER_SIG, strlen(DEFER_SIG) + 1)) {
+  if (memmem(f_data, f_len, DEFER_SIG, strlen(DEFER_SIG) + 1))
+  {
 
     OKF(cPIN "Deferred forkserver binary detected.");
     setenv(DEFER_ENV_VAR, "1", 1);
     deferred_mode = 1;
-
-  } else if (getenv("AFL_DEFER_FORKSRV")) {
+  }
+  else if (getenv("AFL_DEFER_FORKSRV"))
+  {
 
     WARNF("AFL_DEFER_FORKSRV is no longer supported and may misbehave!");
-
   }
 
-  if (munmap(f_data, f_len)) PFATAL("unmap() failed");
-
+  if (munmap(f_data, f_len))
+    PFATAL("unmap() failed");
 }
-
 
 /* Trim and possibly create a banner for the run. */
 
-static void fix_up_banner(u8* name) {
+static void fix_up_banner(u8 *name)
+{
 
-  if (!use_banner) {
+  if (!use_banner)
+  {
 
-    if (sync_id) {
+    if (sync_id)
+    {
 
       use_banner = sync_id;
-
-    } else {
-
-      u8* trim = strrchr(name, '/');
-      if (!trim) use_banner = name; else use_banner = trim + 1;
-
     }
+    else
+    {
 
+      u8 *trim = strrchr(name, '/');
+      if (!trim)
+        use_banner = name;
+      else
+        use_banner = trim + 1;
+    }
   }
 
-  if (strlen(use_banner) > 40) {
+  if (strlen(use_banner) > 40)
+  {
 
-    u8* tmp = ck_alloc(44);
+    u8 *tmp = ck_alloc(44);
     sprintf(tmp, "%.40s...", use_banner);
     use_banner = tmp;
-
   }
-
 }
-
 
 /* Check if we're on TTY. */
 
-static void check_if_tty(void) {
+static void check_if_tty(void)
+{
 
   struct winsize ws;
 
-  if (getenv("AFL_NO_UI")) {
+  if (getenv("AFL_NO_UI"))
+  {
     OKF("Disabling the UI because AFL_NO_UI is set.");
     not_on_tty = 1;
     return;
   }
 
-  if (ioctl(1, TIOCGWINSZ, &ws)) {
+  if (ioctl(1, TIOCGWINSZ, &ws))
+  {
 
-    if (errno == ENOTTY) {
+    if (errno == ENOTTY)
+    {
       OKF("Looks like we're not running on a tty, so I'll be a bit less verbose.");
       not_on_tty = 1;
     }
 
     return;
   }
-
 }
-
 
 /* Check terminal dimensions after resize. */
 
-static void check_term_size(void) {
+static void check_term_size(void)
+{
 
   struct winsize ws;
 
   term_too_small = 0;
 
-  if (ioctl(1, TIOCGWINSZ, &ws)) return;
+  if (ioctl(1, TIOCGWINSZ, &ws))
+    return;
 
-  if (ws.ws_row == 0 && ws.ws_col == 0) return;
-  if (ws.ws_row < 25 || ws.ws_col < 80) term_too_small = 1;
-
+  if (ws.ws_row == 0 && ws.ws_col == 0)
+    return;
+  if (ws.ws_row < 25 || ws.ws_col < 80)
+    term_too_small = 1;
 }
-
-
 
 /* Display usage hints. */
 
-static void usage(u8* argv0) {
+static void usage(u8 *argv0)
+{
 
   SAYF("\n%s [ options ] -- /path/to/fuzzed_app [ ... ]\n\n"
 
@@ -8962,29 +9983,31 @@ static void usage(u8* argv0) {
        argv0, EXEC_TIMEOUT, MEM_LIMIT, doc_path);
 
   exit(1);
-
 }
-
 
 /* Prepare output directories and fds. */
 
-EXP_ST void setup_dirs_fds(void) {
+EXP_ST void setup_dirs_fds(void)
+{
 
-  u8* tmp;
+  u8 *tmp;
   s32 fd;
 
   ACTF("Setting up output directories...");
 
   if (sync_id && mkdir(sync_dir, 0700) && errno != EEXIST)
-      PFATAL("Unable to create '%s'", sync_dir);
+    PFATAL("Unable to create '%s'", sync_dir);
 
-  if (mkdir(out_dir, 0700)) {
+  if (mkdir(out_dir, 0700))
+  {
 
-    if (errno != EEXIST) PFATAL("Unable to create '%s'", out_dir);
+    if (errno != EEXIST)
+      PFATAL("Unable to create '%s'", out_dir);
 
     maybe_delete_out_dir();
-
-  } else {
+  }
+  else
+  {
 
     if (in_place_resume)
       FATAL("Resume attempted but old output directory not found");
@@ -8997,50 +10020,56 @@ EXP_ST void setup_dirs_fds(void) {
       PFATAL("Unable to flock() output directory.");
 
 #endif /* !__sun */
-
   }
 
   /* Queue directory for any starting & discovered paths. */
 
   tmp = alloc_printf("%s/queue", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* Top-level directory for queue metadata used for session
      resume and related tasks. */
 
   tmp = alloc_printf("%s/queue/.state/", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* Directory for flagging queue entries that went through
      deterministic fuzzing in the past. */
 
   tmp = alloc_printf("%s/queue/.state/deterministic_done/", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* Directory with the auto-selected dictionary entries. */
 
   tmp = alloc_printf("%s/queue/.state/auto_extras/", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* The set of paths currently deemed redundant. */
 
   tmp = alloc_printf("%s/queue/.state/redundant_edges/", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* The set of paths showing variable behavior. */
 
   tmp = alloc_printf("%s/queue/.state/variable_behavior/", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* Sync directory for keeping track of cooperating fuzzers. */
 
-  if (sync_id) {
+  if (sync_id)
+  {
 
     tmp = alloc_printf("%s/.synced/", out_dir);
 
@@ -9048,85 +10077,92 @@ EXP_ST void setup_dirs_fds(void) {
       PFATAL("Unable to create '%s'", tmp);
 
     ck_free(tmp);
-
   }
 
   /* All recorded crashes. */
 
   tmp = alloc_printf("%s/replayable-crashes", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* All recorded hangs. */
 
   tmp = alloc_printf("%s/replayable-hangs", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* All files keeping extracted regions -- for debugging purpose. */
 
   tmp = alloc_printf("%s/regions", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* All recorded new paths exercising the implemented state machine. */
 
   tmp = alloc_printf("%s/replayable-new-ipsm-paths", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* All recorded paths in structure files. */
 
   tmp = alloc_printf("%s/replayable-queue", out_dir);
-  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  if (mkdir(tmp, 0700))
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   /* Generally useful file descriptors. */
 
   dev_null_fd = open("/dev/null", O_RDWR);
-  if (dev_null_fd < 0) PFATAL("Unable to open /dev/null");
+  if (dev_null_fd < 0)
+    PFATAL("Unable to open /dev/null");
 
   dev_urandom_fd = open("/dev/urandom", O_RDONLY);
-  if (dev_urandom_fd < 0) PFATAL("Unable to open /dev/urandom");
+  if (dev_urandom_fd < 0)
+    PFATAL("Unable to open /dev/urandom");
 
   /* Gnuplot output file. */
 
   tmp = alloc_printf("%s/plot_data", out_dir);
   fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600);
-  if (fd < 0) PFATAL("Unable to create '%s'", tmp);
+  if (fd < 0)
+    PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   plot_file = fdopen(fd, "w");
-  if (!plot_file) PFATAL("fdopen() failed");
+  if (!plot_file)
+    PFATAL("fdopen() failed");
 
   fprintf(plot_file, "# unix_time, cycles_done, cur_path, paths_total, "
                      "pending_total, pending_favs, map_size, unique_crashes, "
                      "unique_hangs, max_depth, execs_per_sec, n_nodes, n_edges\n");
-                     /* ignore errors */
-
+  /* ignore errors */
 }
-
 
 /* Setup the output file for fuzzed data, if not using -f. */
 
-EXP_ST void setup_stdio_file(void) {
+EXP_ST void setup_stdio_file(void)
+{
 
-  u8* fn = alloc_printf("%s/.cur_input", out_dir);
+  u8 *fn = alloc_printf("%s/.cur_input", out_dir);
 
   unlink(fn); /* Ignore errors */
 
   out_fd = open(fn, O_RDWR | O_CREAT | O_EXCL, 0600);
 
-  if (out_fd < 0) PFATAL("Unable to create '%s'", fn);
+  if (out_fd < 0)
+    PFATAL("Unable to create '%s'", fn);
 
   ck_free(fn);
-
 }
-
 
 /* Make sure that core dumps don't go to a program. */
 
-static void check_crash_handling(void) {
+static void check_crash_handling(void)
+{
 
 #ifdef __APPLE__
 
@@ -9136,7 +10172,8 @@ static void check_crash_handling(void) {
      until I get a box to test the code. So, for now, we check for crash
      reporting the awful way. */
 
-  if (system("launchctl list 2>/dev/null | grep -q '\\.ReportCrash$'")) return;
+  if (system("launchctl list 2>/dev/null | grep -q '\\.ReportCrash$'"))
+    return;
 
   SAYF("\n" cLRD "[-] " cRST
        "Whoops, your system is configured to forward crash notifications to an\n"
@@ -9156,16 +10193,18 @@ static void check_crash_handling(void) {
 #else
 
   /* This is Linux specific, but I don't think there's anything equivalent on
-     *BSD, so we can just let it slide for now. */
+   *BSD, so we can just let it slide for now. */
 
   s32 fd = open("/proc/sys/kernel/core_pattern", O_RDONLY);
-  u8  fchar;
+  u8 fchar;
 
-  if (fd < 0) return;
+  if (fd < 0)
+    return;
 
   ACTF("Checking core_pattern...");
 
-  if (read(fd, &fchar, 1) == 1 && fchar == '|') {
+  if (read(fd, &fchar, 1) == 1 && fchar == '|')
+  {
 
     SAYF("\n" cLRD "[-] " cRST
          "Hmm, your system is configured to send core dump notifications to an\n"
@@ -9180,52 +10219,59 @@ static void check_crash_handling(void) {
 
     if (!getenv("AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES"))
       FATAL("Pipe at the beginning of 'core_pattern'");
-
   }
 
   close(fd);
 
 #endif /* ^__APPLE__ */
-
 }
-
 
 /* Check CPU governor. */
 
-static void check_cpu_governor(void) {
+static void check_cpu_governor(void)
+{
 
-  FILE* f;
+  FILE *f;
   u8 tmp[128];
   u64 min = 0, max = 0;
 
-  if (getenv("AFL_SKIP_CPUFREQ")) return;
+  if (getenv("AFL_SKIP_CPUFREQ"))
+    return;
 
   f = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "r");
-  if (!f) return;
+  if (!f)
+    return;
 
   ACTF("Checking CPU scaling governor...");
 
-  if (!fgets(tmp, 128, f)) PFATAL("fgets() failed");
+  if (!fgets(tmp, 128, f))
+    PFATAL("fgets() failed");
 
   fclose(f);
 
-  if (!strncmp(tmp, "perf", 4)) return;
+  if (!strncmp(tmp, "perf", 4))
+    return;
 
   f = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq", "r");
 
-  if (f) {
-    if (fscanf(f, "%llu", &min) != 1) min = 0;
+  if (f)
+  {
+    if (fscanf(f, "%llu", &min) != 1)
+      min = 0;
     fclose(f);
   }
 
   f = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", "r");
 
-  if (f) {
-    if (fscanf(f, "%llu", &max) != 1) max = 0;
+  if (f)
+  {
+    if (fscanf(f, "%llu", &max) != 1)
+      max = 0;
     fclose(f);
   }
 
-  if (min == max) return;
+  if (min == max)
+    return;
 
   SAYF("\n" cLRD "[-] " cRST
        "Whoops, your system uses on-demand CPU frequency scaling, adjusted\n"
@@ -9242,17 +10288,16 @@ static void check_cpu_governor(void) {
        min / 1024, max / 1024);
 
   FATAL("Suboptimal CPU scaling governor");
-
 }
-
 
 /* Count the number of logical CPU cores. */
 
-static void get_core_count(void) {
+static void get_core_count(void)
+{
 
   u32 cur_runnable = 0;
 
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined (__OpenBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
 
   size_t s = sizeof(cpu_core_count);
 
@@ -9265,9 +10310,10 @@ static void get_core_count(void) {
 
 #else
 
-  int s_name[2] = { CTL_HW, HW_NCPU };
+  int s_name[2] = {CTL_HW, HW_NCPU};
 
-  if (sysctl(s_name, 2, &cpu_core_count, &s, NULL, 0) < 0) return;
+  if (sysctl(s_name, 2, &cpu_core_count, &s, NULL, 0) < 0)
+    return;
 
 #endif /* ^__APPLE__ */
 
@@ -9279,13 +10325,15 @@ static void get_core_count(void) {
 
 #else
 
-  FILE* f = fopen("/proc/stat", "r");
+  FILE *f = fopen("/proc/stat", "r");
   u8 tmp[1024];
 
-  if (!f) return;
+  if (!f)
+    return;
 
   while (fgets(tmp, sizeof(tmp), f))
-    if (!strncmp(tmp, "cpu", 3) && isdigit(tmp[3])) cpu_core_count++;
+    if (!strncmp(tmp, "cpu", 3) && isdigit(tmp[3]))
+      cpu_core_count++;
 
   fclose(f);
 
@@ -9293,11 +10341,12 @@ static void get_core_count(void) {
 
 #endif /* ^(__APPLE__ || __FreeBSD__ || __OpenBSD__) */
 
-  if (cpu_core_count > 0) {
+  if (cpu_core_count > 0)
+  {
 
     cur_runnable = (u32)get_runnable_processes();
 
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined (__OpenBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
 
     /* Add ourselves, since the 1-minute average doesn't include that yet. */
 
@@ -9309,124 +10358,126 @@ static void get_core_count(void) {
         cpu_core_count, cpu_core_count > 1 ? "s" : "",
         cur_runnable, cur_runnable * 100.0 / cpu_core_count);
 
-    if (cpu_core_count > 1) {
+    if (cpu_core_count > 1)
+    {
 
-      if (cur_runnable > cpu_core_count * 1.5) {
+      if (cur_runnable > cpu_core_count * 1.5)
+      {
 
         WARNF("System under apparent load, performance may be spotty.");
-
-      } else if (cur_runnable + 1 <= cpu_core_count) {
+      }
+      else if (cur_runnable + 1 <= cpu_core_count)
+      {
 
         OKF("Try parallel jobs - see %s/parallel_fuzzing.txt.", doc_path);
-
       }
-
     }
-
-  } else {
+  }
+  else
+  {
 
     cpu_core_count = 0;
     WARNF("Unable to figure out the number of CPU cores.");
-
   }
-
 }
-
 
 /* Validate and fix up out_dir and sync_dir when using -S. */
 
-static void fix_up_sync(void) {
+static void fix_up_sync(void)
+{
 
-  u8* x = sync_id;
+  u8 *x = sync_id;
 
   if (dumb_mode)
     FATAL("-S / -M and -n are mutually exclusive");
 
-  if (skip_deterministic) {
+  if (skip_deterministic)
+  {
 
     if (force_deterministic)
       FATAL("use -S instead of -M -d");
     else
       FATAL("-S already implies -d");
-
   }
 
-  while (*x) {
+  while (*x)
+  {
 
     if (!isalnum(*x) && *x != '_' && *x != '-')
       FATAL("Non-alphanumeric fuzzer ID specified via -S or -M");
 
     x++;
-
   }
 
-  if (strlen(sync_id) > 32) FATAL("Fuzzer ID too long");
+  if (strlen(sync_id) > 32)
+    FATAL("Fuzzer ID too long");
 
   x = alloc_printf("%s/%s", out_dir, sync_id);
 
   sync_dir = out_dir;
-  out_dir  = x;
+  out_dir = x;
 
-  if (!force_deterministic) {
+  if (!force_deterministic)
+  {
     skip_deterministic = 1;
     use_splicing = 1;
   }
-
 }
-
 
 /* Handle screen resize (SIGWINCH). */
 
-static void handle_resize(int sig) {
+static void handle_resize(int sig)
+{
   clear_screen = 1;
 }
 
-
 /* Check ASAN options. */
 
-static void check_asan_opts(void) {
-  u8* x = getenv("ASAN_OPTIONS");
+static void check_asan_opts(void)
+{
+  u8 *x = getenv("ASAN_OPTIONS");
 
-  if (x) {
+  if (x)
+  {
 
     if (!strstr(x, "abort_on_error=1"))
       FATAL("Custom ASAN_OPTIONS set without abort_on_error=1 - please fix!");
 
     if (!strstr(x, "symbolize=0"))
       FATAL("Custom ASAN_OPTIONS set without symbolize=0 - please fix!");
-
   }
 
   x = getenv("MSAN_OPTIONS");
 
-  if (x) {
+  if (x)
+  {
 
     if (!strstr(x, "exit_code=" STRINGIFY(MSAN_ERROR)))
-      FATAL("Custom MSAN_OPTIONS set without exit_code="
-            STRINGIFY(MSAN_ERROR) " - please fix!");
+      FATAL("Custom MSAN_OPTIONS set without exit_code=" STRINGIFY(MSAN_ERROR) " - please fix!");
 
     if (!strstr(x, "symbolize=0"))
       FATAL("Custom MSAN_OPTIONS set without symbolize=0 - please fix!");
-
   }
-
 }
-
 
 /* Detect @@ in args. */
 
-EXP_ST void detect_file_args(char** argv) {
+EXP_ST void detect_file_args(char **argv)
+{
 
   u32 i = 0;
-  u8* cwd = getcwd(NULL, 0);
+  u8 *cwd = getcwd(NULL, 0);
 
-  if (!cwd) PFATAL("getcwd() failed");
+  if (!cwd)
+    PFATAL("getcwd() failed");
 
-  while (argv[i]) {
+  while (argv[i])
+  {
 
-    u8* aa_loc = strstr(argv[i], "@@");
+    u8 *aa_loc = strstr(argv[i], "@@");
 
-    if (aa_loc) {
+    if (aa_loc)
+    {
 
       u8 *aa_subst, *n_arg;
 
@@ -9437,8 +10488,10 @@ EXP_ST void detect_file_args(char** argv) {
 
       /* Be sure that we're always using fully-qualified paths. */
 
-      if (out_file[0] == '/') aa_subst = out_file;
-      else aa_subst = alloc_printf("%s/%s", cwd, out_file);
+      if (out_file[0] == '/')
+        aa_subst = out_file;
+      else
+        aa_subst = alloc_printf("%s/%s", cwd, out_file);
 
       /* Construct a replacement argv value. */
 
@@ -9447,29 +10500,27 @@ EXP_ST void detect_file_args(char** argv) {
       argv[i] = n_arg;
       *aa_loc = '@';
 
-      if (out_file[0] != '/') ck_free(aa_subst);
-
+      if (out_file[0] != '/')
+        ck_free(aa_subst);
     }
 
     i++;
-
   }
 
   free(cwd); /* not tracked */
-
 }
-
 
 /* Set up signal handlers. More complicated that needs to be, because libc on
    Solaris doesn't resume interrupted reads(), sets SA_RESETHAND when you call
    siginterrupt(), and does other unnecessary things. */
 
-EXP_ST void setup_signal_handlers(void) {
+EXP_ST void setup_signal_handlers(void)
+{
 
   struct sigaction sa;
 
-  sa.sa_handler   = NULL;
-  sa.sa_flags     = SA_RESTART;
+  sa.sa_handler = NULL;
+  sa.sa_flags = SA_RESTART;
   sa.sa_sigaction = NULL;
 
   sigemptyset(&sa.sa_mask);
@@ -9501,22 +10552,21 @@ EXP_ST void setup_signal_handlers(void) {
   sa.sa_handler = SIG_IGN;
   sigaction(SIGTSTP, &sa, NULL);
   sigaction(SIGPIPE, &sa, NULL);
-
 }
-
 
 /* Rewrite argv for QEMU. */
 
-static char** get_qemu_argv(u8* own_loc, char** argv, int argc) {
+static char **get_qemu_argv(u8 *own_loc, char **argv, int argc)
+{
 
-  char** new_argv = ck_alloc(sizeof(char*) * (argc + 4));
+  char **new_argv = ck_alloc(sizeof(char *) * (argc + 4));
   u8 *tmp, *cp, *rsl, *own_copy;
 
   /* Workaround for a QEMU stability glitch. */
 
   setenv("QEMU_LOG", "nochain", 1);
 
-  memcpy(new_argv + 3, argv + 1, sizeof(char*) * argc);
+  memcpy(new_argv + 3, argv + 1, sizeof(char *) * argc);
 
   new_argv[2] = target_path;
   new_argv[1] = "--";
@@ -9525,7 +10575,8 @@ static char** get_qemu_argv(u8* own_loc, char** argv, int argc) {
 
   tmp = getenv("AFL_PATH");
 
-  if (tmp) {
+  if (tmp)
+  {
 
     cp = alloc_printf("%s/afl-qemu-trace", tmp);
 
@@ -9534,33 +10585,34 @@ static char** get_qemu_argv(u8* own_loc, char** argv, int argc) {
 
     target_path = new_argv[0] = cp;
     return new_argv;
-
   }
 
   own_copy = ck_strdup(own_loc);
   rsl = strrchr(own_copy, '/');
 
-  if (rsl) {
+  if (rsl)
+  {
 
     *rsl = 0;
 
     cp = alloc_printf("%s/afl-qemu-trace", own_copy);
     ck_free(own_copy);
 
-    if (!access(cp, X_OK)) {
+    if (!access(cp, X_OK))
+    {
 
       target_path = new_argv[0] = cp;
       return new_argv;
-
     }
+  }
+  else
+    ck_free(own_copy);
 
-  } else ck_free(own_copy);
-
-  if (!access(BIN_PATH "/afl-qemu-trace", X_OK)) {
+  if (!access(BIN_PATH "/afl-qemu-trace", X_OK))
+  {
 
     target_path = new_argv[0] = ck_strdup(BIN_PATH "/afl-qemu-trace");
     return new_argv;
-
   }
 
   SAYF("\n" cLRD "[-] " cRST
@@ -9574,40 +10626,40 @@ static char** get_qemu_argv(u8* own_loc, char** argv, int argc) {
        "    traditional \"dumb\" fuzzer by specifying '-n' in the command line.\n");
 
   FATAL("Failed to locate 'afl-qemu-trace'.");
-
 }
-
 
 /* Make a copy of the current command line. */
 
-static void save_cmdline(u32 argc, char** argv) {
+static void save_cmdline(u32 argc, char **argv)
+{
 
   u32 len = 1, i;
-  u8* buf;
+  u8 *buf;
 
   for (i = 0; i < argc; i++)
     len += strlen(argv[i]) + 1;
 
   buf = orig_cmdline = ck_alloc(len);
 
-  for (i = 0; i < argc; i++) {
+  for (i = 0; i < argc; i++)
+  {
 
     u32 l = strlen(argv[i]);
 
     memcpy(buf, argv[i], l);
     buf += l;
 
-    if (i != argc - 1) *(buf++) = ' ';
-
+    if (i != argc - 1)
+      *(buf++) = ' ';
   }
 
   *buf = 0;
-
 }
 
 /* Check that afl-fuzz (file/process) has some effective and permitted capability */
 
-static int check_ep_capability(cap_value_t cap, const char *filename) {
+static int check_ep_capability(cap_value_t cap, const char *filename)
+{
   cap_t file_cap, proc_cap;
   cap_flag_value_t cap_flag_value;
   int no_capability = 1;
@@ -9619,7 +10671,8 @@ static int check_ep_capability(cap_value_t cap, const char *filename) {
   if (!file_cap && !proc_cap)
     return no_capability;
 
-  if (file_cap) {
+  if (file_cap)
+  {
     if (cap_get_flag(file_cap, cap, CAP_EFFECTIVE, &cap_flag_value))
       PFATAL("Could not get CAP_EFFECTIVE flag value from file \"%s\"", filename);
 
@@ -9633,7 +10686,8 @@ static int check_ep_capability(cap_value_t cap, const char *filename) {
       return no_capability;
   }
 
-  if (proc_cap) {
+  if (proc_cap)
+  {
     if (cap_get_flag(proc_cap, cap, CAP_EFFECTIVE, &cap_flag_value))
       PFATAL("Could not get CAP_EFFECTIVE flag value from process id %d", pid);
 
@@ -9654,15 +10708,16 @@ static int check_ep_capability(cap_value_t cap, const char *filename) {
 
 /* Main entry point */
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv)
+{
 
   s32 opt;
   u64 prev_queued = 0;
   u32 sync_interval_cnt = 0, seek_to;
-  u8  *extras_dir = 0;
-  u8  mem_limit_given = 0;
-  u8  exit_1 = !!getenv("AFL_BENCH_JUST_ONE");
-  //char** use_argv;
+  u8 *extras_dir = 0;
+  u8 mem_limit_given = 0;
+  u8 exit_1 = !!getenv("AFL_BENCH_JUST_ONE");
+  // char** use_argv;
 
   struct timeval tv;
   struct timezone tz;
@@ -9676,375 +10731,482 @@ int main(int argc, char** argv) {
 
   while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:QN:D:W:w:e:P:KEq:s:RFc:l:b:h:")) > 0)
 
-    switch (opt) {
+    switch (opt)
+    {
 
-      case 'i': /* input dir */
+    case 'i': /* input dir */
 
-        if (in_dir) FATAL("Multiple -i options not supported");
-        in_dir = optarg;
+      if (in_dir)
+        FATAL("Multiple -i options not supported");
+      in_dir = optarg;
 
-        if (!strcmp(in_dir, "-")) in_place_resume = 1;
+      if (!strcmp(in_dir, "-"))
+        in_place_resume = 1;
 
-        break;
+      break;
 
-      case 'o': /* output dir */
+    case 'o': /* output dir */
 
-        if (out_dir) FATAL("Multiple -o options not supported");
-        out_dir = optarg;
-        break;
+      if (out_dir)
+        FATAL("Multiple -o options not supported");
+      out_dir = optarg;
+      break;
 
-      case 'M': { /* master sync ID */
+    case 'M':
+    { /* master sync ID */
 
-          u8* c;
+      u8 *c;
 
-          if (sync_id) FATAL("Multiple -S or -M options not supported");
-          sync_id = ck_strdup(optarg);
+      if (sync_id)
+        FATAL("Multiple -S or -M options not supported");
+      sync_id = ck_strdup(optarg);
 
-          if ((c = strchr(sync_id, ':'))) {
+      if ((c = strchr(sync_id, ':')))
+      {
 
-            *c = 0;
+        *c = 0;
 
-            if (sscanf(c + 1, "%u/%u", &master_id, &master_max) != 2 ||
-                !master_id || !master_max || master_id > master_max ||
-                master_max > 1000000) FATAL("Bogus master ID passed to -M");
-
-          }
-
-          force_deterministic = 1;
-
-        }
-
-        break;
-
-      case 'S':
-
-        if (sync_id) FATAL("Multiple -S or -M options not supported");
-        sync_id = ck_strdup(optarg);
-        break;
-
-      case 'f': /* target file */
-
-        if (out_file) FATAL("Multiple -f options not supported");
-        out_file = optarg;
-        break;
-
-      case 'x': /* dictionary */
-
-        if (extras_dir) FATAL("Multiple -x options not supported");
-        extras_dir = optarg;
-        break;
-
-      case 't': { /* timeout */
-
-          u8 suffix = 0;
-
-          if (timeout_given) FATAL("Multiple -t options not supported");
-
-          if (sscanf(optarg, "%u%c", &exec_tmout, &suffix) < 1 ||
-              optarg[0] == '-') FATAL("Bad syntax used for -t");
-
-          if (exec_tmout < 5) FATAL("Dangerously low value of -t");
-
-          if (suffix == '+') timeout_given = 2; else timeout_given = 1;
-
-          break;
-
+        if (sscanf(c + 1, "%u/%u", &master_id, &master_max) != 2 ||
+            !master_id || !master_max || master_id > master_max ||
+            master_max > 1000000)
+          FATAL("Bogus master ID passed to -M");
       }
 
-      case 'm': { /* mem limit */
+      force_deterministic = 1;
+    }
 
-          u8 suffix = 'M';
+    break;
 
-          if (mem_limit_given) FATAL("Multiple -m options not supported");
-          mem_limit_given = 1;
+    case 'S':
 
-          if (!strcmp(optarg, "none")) {
+      if (sync_id)
+        FATAL("Multiple -S or -M options not supported");
+      sync_id = ck_strdup(optarg);
+      break;
 
-            mem_limit = 0;
-            break;
+    case 'f': /* target file */
 
-          }
+      if (out_file)
+        FATAL("Multiple -f options not supported");
+      out_file = optarg;
+      break;
 
-          if (sscanf(optarg, "%llu%c", &mem_limit, &suffix) < 1 ||
-              optarg[0] == '-') FATAL("Bad syntax used for -m");
+    case 'x': /* dictionary */
 
-          switch (suffix) {
+      if (extras_dir)
+        FATAL("Multiple -x options not supported");
+      extras_dir = optarg;
+      break;
 
-            case 'T': mem_limit *= 1024 * 1024; break;
-            case 'G': mem_limit *= 1024; break;
-            case 'k': mem_limit /= 1024; break;
-            case 'M': break;
+    case 't':
+    { /* timeout */
 
-            default:  FATAL("Unsupported suffix or bad syntax for -m");
+      u8 suffix = 0;
 
-          }
+      if (timeout_given)
+        FATAL("Multiple -t options not supported");
 
-          if (mem_limit < 5) FATAL("Dangerously low value of -m");
+      if (sscanf(optarg, "%u%c", &exec_tmout, &suffix) < 1 ||
+          optarg[0] == '-')
+        FATAL("Bad syntax used for -t");
 
-          if (sizeof(rlim_t) == 4 && mem_limit > 2000)
-            FATAL("Value of -m out of range on 32-bit systems");
+      if (exec_tmout < 5)
+        FATAL("Dangerously low value of -t");
 
-        }
+      if (suffix == '+')
+        timeout_given = 2;
+      else
+        timeout_given = 1;
 
+      break;
+    }
+
+    case 'm':
+    { /* mem limit */
+
+      u8 suffix = 'M';
+
+      if (mem_limit_given)
+        FATAL("Multiple -m options not supported");
+      mem_limit_given = 1;
+
+      if (!strcmp(optarg, "none"))
+      {
+
+        mem_limit = 0;
         break;
+      }
 
-      case 'd': /* skip deterministic */
+      if (sscanf(optarg, "%llu%c", &mem_limit, &suffix) < 1 ||
+          optarg[0] == '-')
+        FATAL("Bad syntax used for -m");
 
-        if (skip_deterministic) FATAL("Multiple -d options not supported");
-        skip_deterministic = 1;
-        use_splicing = 1;
+      switch (suffix)
+      {
+
+      case 'T':
+        mem_limit *= 1024 * 1024;
         break;
-
-      case 'B': /* load bitmap */
-
-        /* This is a secret undocumented option! It is useful if you find
-           an interesting test case during a normal fuzzing process, and want
-           to mutate it without rediscovering any of the test cases already
-           found during an earlier run.
-
-           To use this mode, you need to point -B to the fuzz_bitmap produced
-           by an earlier run for the exact same binary... and that's it.
-
-           I only used this once or twice to get variants of a particular
-           file, so I'm not making this an official setting. */
-
-        if (in_bitmap) FATAL("Multiple -B options not supported");
-
-        in_bitmap = optarg;
-        read_bitmap(in_bitmap);
+      case 'G':
+        mem_limit *= 1024;
         break;
-
-      case 'C': /* crash mode */
-
-        if (crash_mode) FATAL("Multiple -C options not supported");
-        crash_mode = FAULT_CRASH;
+      case 'k':
+        mem_limit /= 1024;
         break;
-
-      case 'n': /* dumb mode */
-
-        if (dumb_mode) FATAL("Multiple -n options not supported");
-        if (getenv("AFL_DUMB_FORKSRV")) dumb_mode = 2; else dumb_mode = 1;
-
-        break;
-
-      case 'T': /* banner */
-
-        if (use_banner) FATAL("Multiple -T options not supported");
-        use_banner = optarg;
-        break;
-
-      case 'Q': /* QEMU mode */
-
-        if (qemu_mode) FATAL("Multiple -Q options not supported");
-        qemu_mode = 1;
-
-        if (!mem_limit_given) mem_limit = MEM_LIMIT_QEMU;
-
-        break;
-
-      case 'N': /* Network configuration */
-        if (use_net) FATAL("Multiple -N options not supported");
-        if (parse_net_config(optarg, &net_protocol, &net_ip, &net_port)) FATAL("Bad syntax used for -N. Check the network setting. [tcp/udp]://127.0.0.1/port");
-
-        use_net = 1;
-        break;
-
-      case 'D': /* waiting time for the server initialization */
-        if (server_wait) FATAL("Multiple -D options not supported");
-
-        if (sscanf(optarg, "%u", &server_wait_usecs) < 1 || optarg[0] == '-') FATAL("Bad syntax used for -D");
-        server_wait = 1;
-        break;
-
-      case 'W': /* polling timeout determining maximum amount of time waited before concluding that no responses are forthcoming*/
-        if (socket_timeout) FATAL("Multiple -W options not supported");
-
-        if (sscanf(optarg, "%u", &poll_wait_msecs) < 1 || optarg[0] == '-') FATAL("Bad syntax used for -W");
-        poll_wait = 1;
-        break;
-
-      case 'w': /* receive/send socket timeout determining time waited for each response */
-        if (socket_timeout) FATAL("Multiple -w options not supported");
-
-        if (sscanf(optarg, "%u", &socket_timeout_usecs) < 1 || optarg[0] == '-') FATAL("Bad syntax used for -w");
-        socket_timeout = 1;
-        break;
-
-      case 'e': /* network namespace name */
-        if (netns_name) FATAL("Multiple -e options not supported");
-
-        netns_name = optarg;
-        break;
-
-      case 'P': /* protocol to be tested */
-        if (protocol_selected) FATAL("Multiple -P options not supported");
-
-        if (!strcmp(optarg, "RTSP")) {
-          extract_requests = &extract_requests_rtsp;
-          extract_response_codes = &extract_response_codes_rtsp;
-        } else if (!strcmp(optarg, "FTP")) {
-          extract_requests = &extract_requests_ftp;
-          extract_response_codes = &extract_response_codes_ftp;
-        } else if (!strcmp(optarg, "MQTT")) {
-          extract_requests = &extract_requests_mqtt;
-          extract_response_codes = &extract_response_codes_mqtt;
-        } else if (!strcmp(optarg, "DTLS12")) {
-          extract_requests = &extract_requests_dtls12;
-          extract_response_codes = &extract_response_codes_dtls12;
-        } else if (!strcmp(optarg, "DNS")) {
-          extract_requests = &extract_requests_dns;
-          extract_response_codes = &extract_response_codes_dns;
-        } else if (!strcmp(optarg, "DICOM")) {
-          extract_requests = &extract_requests_dicom;
-          extract_response_codes = &extract_response_codes_dicom;
-        } else if (!strcmp(optarg, "SMTP")) {
-          extract_requests = &extract_requests_smtp;
-          extract_response_codes = &extract_response_codes_smtp;
-        } else if (!strcmp(optarg, "SSH")) {
-          extract_requests = &extract_requests_ssh;
-          extract_response_codes = &extract_response_codes_ssh;
-        } else if (!strcmp(optarg, "TLS")) {
-          extract_requests = &extract_requests_tls;
-          extract_response_codes = &extract_response_codes_tls;
-        } else if (!strcmp(optarg, "SIP")) {
-          extract_requests = &extract_requests_sip;
-          extract_response_codes = &extract_response_codes_sip;
-        } else if (!strcmp(optarg, "HTTP")) {
-          extract_requests = &extract_requests_http;
-          extract_response_codes = &extract_response_codes_http;
-        } else if (!strcmp(optarg, "IPP")) {
-          extract_requests = &extract_requests_ipp;
-          extract_response_codes = &extract_response_codes_ipp;
-        } else if (!strcmp(optarg, "TFTP")) {
-          extract_requests = &extract_requests_tftp;
-          extract_response_codes = &extract_response_codes_tftp;
-        }else if (!strcmp(optarg, "DHCP")) {
-          extract_requests = &extract_requests_dhcp;
-          extract_response_codes = &extract_response_codes_dhcp;
-        }else if (!strcmp(optarg, "SNTP")) {
-          extract_requests = &extract_requests_SNTP;
-          extract_response_codes = &extract_response_codes_SNTP;
-        }else if (!strcmp(optarg, "NTP")) {
-          extract_requests = &extract_requests_NTP;
-          extract_response_codes = &extract_response_codes_NTP;
-        }else if (!strcmp(optarg, "SNMP")) {
-          extract_requests = &extract_requests_SNMP;
-          extract_response_codes = &extract_response_codes_SNMP;
-        } else {
-          FATAL("%s protocol is not supported yet!", optarg);
-        }
-
-        protocol_selected = 1;
-
-        break;
-
-      case 'K':
-        if (terminate_child) FATAL("Multiple -K options not supported");
-        terminate_child = 1;
-        break;
-
-      case 'E':
-        if (state_aware_mode) FATAL("Multiple -E options not supported");
-        state_aware_mode = 1;
-        break;
-
-      case 'q': /* state selection option */
-        if (sscanf(optarg, "%hhu", &state_selection_algo) < 1 || optarg[0] == '-') FATAL("Bad syntax used for -q");
-        break;
-
-      case 's': /* seed selection option */
-        if (sscanf(optarg, "%hhu", &seed_selection_algo) < 1 || optarg[0] == '-') FATAL("Bad syntax used for -s");
-        break;
-      
-      case 'b': /* feedback type */
-        if (sscanf(optarg, "%hhu", &feedback_type) < 1 || optarg[0] == '-') FATAL("Bad syntax used for -b");
-        break;
-      
-      case 'h':
-        if (sscanf(optarg, "%hhu", &seed_schedule_type) < 1 || optarg[0] == '-') FATAL("Bad syntax used for -b");
-        break;
-
-      case 'R':
-        if (region_level_mutation) FATAL("Multiple -R options not supported");
-        region_level_mutation = 1;
-        break;
-
-      case 'F':
-        if (false_negative_reduction) FATAL("Multiple -F options not supported");
-        false_negative_reduction = 1;
-        break;
-
-      case 'c': /* cleanup script */
-
-        if (cleanup_script) FATAL("Multiple -c options not supported");
-        cleanup_script = optarg;
-        break;
-
-      case 'l': /* local port to connect from */
-        //This option is only used for targets that send responses to a specific port number
-        //The Kamailio SIP server is an example
-
-        if (local_port) FATAL("Multiple -l options not supported");
-        local_port = atoi(optarg);
-	      if (local_port < 1024 || local_port > 65535) FATAL("Invalid source port number");
+      case 'M':
         break;
 
       default:
+        FATAL("Unsupported suffix or bad syntax for -m");
+      }
 
-        usage(argv[0]);
+      if (mem_limit < 5)
+        FATAL("Dangerously low value of -m");
 
+      if (sizeof(rlim_t) == 4 && mem_limit > 2000)
+        FATAL("Value of -m out of range on 32-bit systems");
     }
 
-  if (optind == argc || !in_dir || !out_dir) usage(argv[0]);
+    break;
 
-  //AFLNet - Check for required arguments
-  if (!use_net) FATAL("Please specify network information of the server under test (e.g., tcp://127.0.0.1/8554)");
+    case 'd': /* skip deterministic */
 
-  if (!protocol_selected) FATAL("Please specify the protocol to be tested using the -P option");
+      if (skip_deterministic)
+        FATAL("Multiple -d options not supported");
+      skip_deterministic = 1;
+      use_splicing = 1;
+      break;
 
-  if (netns_name) {
+    case 'B': /* load bitmap */
+
+      /* This is a secret undocumented option! It is useful if you find
+         an interesting test case during a normal fuzzing process, and want
+         to mutate it without rediscovering any of the test cases already
+         found during an earlier run.
+
+         To use this mode, you need to point -B to the fuzz_bitmap produced
+         by an earlier run for the exact same binary... and that's it.
+
+         I only used this once or twice to get variants of a particular
+         file, so I'm not making this an official setting. */
+
+      if (in_bitmap)
+        FATAL("Multiple -B options not supported");
+
+      in_bitmap = optarg;
+      read_bitmap(in_bitmap);
+      break;
+
+    case 'C': /* crash mode */
+
+      if (crash_mode)
+        FATAL("Multiple -C options not supported");
+      crash_mode = FAULT_CRASH;
+      break;
+
+    case 'n': /* dumb mode */
+
+      if (dumb_mode)
+        FATAL("Multiple -n options not supported");
+      if (getenv("AFL_DUMB_FORKSRV"))
+        dumb_mode = 2;
+      else
+        dumb_mode = 1;
+
+      break;
+
+    case 'T': /* banner */
+
+      if (use_banner)
+        FATAL("Multiple -T options not supported");
+      use_banner = optarg;
+      break;
+
+    case 'Q': /* QEMU mode */
+
+      if (qemu_mode)
+        FATAL("Multiple -Q options not supported");
+      qemu_mode = 1;
+
+      if (!mem_limit_given)
+        mem_limit = MEM_LIMIT_QEMU;
+
+      break;
+
+    case 'N': /* Network configuration */
+      if (use_net)
+        FATAL("Multiple -N options not supported");
+      if (parse_net_config(optarg, &net_protocol, &net_ip, &net_port))
+        FATAL("Bad syntax used for -N. Check the network setting. [tcp/udp]://127.0.0.1/port");
+
+      use_net = 1;
+      break;
+
+    case 'D': /* waiting time for the server initialization */
+      if (server_wait)
+        FATAL("Multiple -D options not supported");
+
+      if (sscanf(optarg, "%u", &server_wait_usecs) < 1 || optarg[0] == '-')
+        FATAL("Bad syntax used for -D");
+      server_wait = 1;
+      break;
+
+    case 'W': /* polling timeout determining maximum amount of time waited before concluding that no responses are forthcoming*/
+      if (socket_timeout)
+        FATAL("Multiple -W options not supported");
+
+      if (sscanf(optarg, "%u", &poll_wait_msecs) < 1 || optarg[0] == '-')
+        FATAL("Bad syntax used for -W");
+      poll_wait = 1;
+      break;
+
+    case 'w': /* receive/send socket timeout determining time waited for each response */
+      if (socket_timeout)
+        FATAL("Multiple -w options not supported");
+
+      if (sscanf(optarg, "%u", &socket_timeout_usecs) < 1 || optarg[0] == '-')
+        FATAL("Bad syntax used for -w");
+      socket_timeout = 1;
+      break;
+
+    case 'e': /* network namespace name */
+      if (netns_name)
+        FATAL("Multiple -e options not supported");
+
+      netns_name = optarg;
+      break;
+
+    case 'P': /* protocol to be tested */
+      if (protocol_selected)
+        FATAL("Multiple -P options not supported");
+
+      if (!strcmp(optarg, "RTSP"))
+      {
+        extract_requests = &extract_requests_rtsp;
+        extract_response_codes = &extract_response_codes_rtsp;
+      }
+      else if (!strcmp(optarg, "FTP"))
+      {
+        extract_requests = &extract_requests_ftp;
+        extract_response_codes = &extract_response_codes_ftp;
+      }
+      else if (!strcmp(optarg, "MQTT"))
+      {
+        extract_requests = &extract_requests_mqtt;
+        extract_response_codes = &extract_response_codes_mqtt;
+      }
+      else if (!strcmp(optarg, "DTLS12"))
+      {
+        extract_requests = &extract_requests_dtls12;
+        extract_response_codes = &extract_response_codes_dtls12;
+      }
+      else if (!strcmp(optarg, "DNS"))
+      {
+        extract_requests = &extract_requests_dns;
+        extract_response_codes = &extract_response_codes_dns;
+      }
+      else if (!strcmp(optarg, "DICOM"))
+      {
+        extract_requests = &extract_requests_dicom;
+        extract_response_codes = &extract_response_codes_dicom;
+      }
+      else if (!strcmp(optarg, "SMTP"))
+      {
+        extract_requests = &extract_requests_smtp;
+        extract_response_codes = &extract_response_codes_smtp;
+      }
+      else if (!strcmp(optarg, "SSH"))
+      {
+        extract_requests = &extract_requests_ssh;
+        extract_response_codes = &extract_response_codes_ssh;
+      }
+      else if (!strcmp(optarg, "TLS"))
+      {
+        extract_requests = &extract_requests_tls;
+        extract_response_codes = &extract_response_codes_tls;
+      }
+      else if (!strcmp(optarg, "SIP"))
+      {
+        extract_requests = &extract_requests_sip;
+        extract_response_codes = &extract_response_codes_sip;
+      }
+      else if (!strcmp(optarg, "HTTP"))
+      {
+        extract_requests = &extract_requests_http;
+        extract_response_codes = &extract_response_codes_http;
+      }
+      else if (!strcmp(optarg, "IPP"))
+      {
+        extract_requests = &extract_requests_ipp;
+        extract_response_codes = &extract_response_codes_ipp;
+      }
+      else if (!strcmp(optarg, "TFTP"))
+      {
+        extract_requests = &extract_requests_tftp;
+        extract_response_codes = &extract_response_codes_tftp;
+      }
+      else if (!strcmp(optarg, "DHCP"))
+      {
+        extract_requests = &extract_requests_dhcp;
+        extract_response_codes = &extract_response_codes_dhcp;
+      }
+      else if (!strcmp(optarg, "SNTP"))
+      {
+        extract_requests = &extract_requests_SNTP;
+        extract_response_codes = &extract_response_codes_SNTP;
+      }
+      else if (!strcmp(optarg, "NTP"))
+      {
+        extract_requests = &extract_requests_NTP;
+        extract_response_codes = &extract_response_codes_NTP;
+      }
+      else if (!strcmp(optarg, "SNMP"))
+      {
+        extract_requests = &extract_requests_SNMP;
+        extract_response_codes = &extract_response_codes_SNMP;
+      }
+      else
+      {
+        FATAL("%s protocol is not supported yet!", optarg);
+      }
+
+      protocol_selected = 1;
+
+      break;
+
+    case 'K':
+      if (terminate_child)
+        FATAL("Multiple -K options not supported");
+      terminate_child = 1;
+      break;
+
+    case 'E':
+      if (state_aware_mode)
+        FATAL("Multiple -E options not supported");
+      state_aware_mode = 1;
+      break;
+
+    case 'q': /* state selection option */
+      if (sscanf(optarg, "%hhu", &state_selection_algo) < 1 || optarg[0] == '-')
+        FATAL("Bad syntax used for -q");
+      break;
+
+    case 's': /* seed selection option */
+      if (sscanf(optarg, "%hhu", &seed_selection_algo) < 1 || optarg[0] == '-')
+        FATAL("Bad syntax used for -s");
+      break;
+
+    case 'b': /* feedback type */
+      if (sscanf(optarg, "%hhu", &feedback_type) < 1 || optarg[0] == '-')
+        FATAL("Bad syntax used for -b");
+      break;
+
+    case 'h':
+      if (sscanf(optarg, "%hhu", &seed_schedule_type) < 1 || optarg[0] == '-')
+        FATAL("Bad syntax used for -b");
+      break;
+
+    case 'R':
+      if (region_level_mutation)
+        FATAL("Multiple -R options not supported");
+      region_level_mutation = 1;
+      break;
+
+    case 'F':
+      if (false_negative_reduction)
+        FATAL("Multiple -F options not supported");
+      false_negative_reduction = 1;
+      break;
+
+    case 'c': /* cleanup script */
+
+      if (cleanup_script)
+        FATAL("Multiple -c options not supported");
+      cleanup_script = optarg;
+      break;
+
+    case 'l': /* local port to connect from */
+      // This option is only used for targets that send responses to a specific port number
+      // The Kamailio SIP server is an example
+
+      if (local_port)
+        FATAL("Multiple -l options not supported");
+      local_port = atoi(optarg);
+      if (local_port < 1024 || local_port > 65535)
+        FATAL("Invalid source port number");
+      break;
+
+    default:
+
+      usage(argv[0]);
+    }
+
+  if (optind == argc || !in_dir || !out_dir)
+    usage(argv[0]);
+
+  // AFLNet - Check for required arguments
+  if (!use_net)
+    FATAL("Please specify network information of the server under test (e.g., tcp://127.0.0.1/8554)");
+
+  if (!protocol_selected)
+    FATAL("Please specify the protocol to be tested using the -P option");
+
+  if (netns_name)
+  {
     if (check_ep_capability(CAP_SYS_ADMIN, argv[0]) != 0)
       FATAL("Could not run the server under test in a \"%s\" network namespace "
             "without CAP_SYS_ADMIN capability.\n You can set it by invoking "
-            "afl-fuzz with sudo or by \"$ setcap cap_sys_admin+ep /path/to/afl-fuzz\".", netns_name);
+            "afl-fuzz with sudo or by \"$ setcap cap_sys_admin+ep /path/to/afl-fuzz\".",
+            netns_name);
   }
 
-  if (feedback_type > 1 && !state_aware_mode) 
+  if (feedback_type > 1 && !state_aware_mode)
     FATAL("Feedback type %d is only supported in state-aware mode", feedback_type);
-  
-  if (seed_schedule_type > 1 && !state_aware_mode) 
+
+  if (seed_schedule_type > 1 && !state_aware_mode)
     FATAL("Seed schedule %d is only supported in state-aware mode", seed_schedule_type);
 
   setup_signal_handlers();
   check_asan_opts();
 
-  if (sync_id) fix_up_sync();
+  if (sync_id)
+    fix_up_sync();
 
   if (!strcmp(in_dir, out_dir))
     FATAL("Input and output directories can't be the same");
 
-  if (dumb_mode) {
+  if (dumb_mode)
+  {
 
-    if (crash_mode) FATAL("-C and -n are mutually exclusive");
-    if (qemu_mode)  FATAL("-Q and -n are mutually exclusive");
-
+    if (crash_mode)
+      FATAL("-C and -n are mutually exclusive");
+    if (qemu_mode)
+      FATAL("-Q and -n are mutually exclusive");
   }
 
-  if (getenv("AFL_NO_FORKSRV"))    no_forkserver    = 1;
-  if (getenv("AFL_NO_CPU_RED"))    no_cpu_meter_red = 1;
-  if (getenv("AFL_NO_ARITH"))      no_arith         = 1;
-  if (getenv("AFL_SHUFFLE_QUEUE")) shuffle_queue    = 1;
-  if (getenv("AFL_FAST_CAL"))      fast_cal         = 1;
+  if (getenv("AFL_NO_FORKSRV"))
+    no_forkserver = 1;
+  if (getenv("AFL_NO_CPU_RED"))
+    no_cpu_meter_red = 1;
+  if (getenv("AFL_NO_ARITH"))
+    no_arith = 1;
+  if (getenv("AFL_SHUFFLE_QUEUE"))
+    shuffle_queue = 1;
+  if (getenv("AFL_FAST_CAL"))
+    fast_cal = 1;
 
-  if (getenv("AFL_HANG_TMOUT")) {
+  if (getenv("AFL_HANG_TMOUT"))
+  {
     hang_tmout = atoi(getenv("AFL_HANG_TMOUT"));
-    if (!hang_tmout) FATAL("Invalid value of AFL_HANG_TMOUT");
+    if (!hang_tmout)
+      FATAL("Invalid value of AFL_HANG_TMOUT");
   }
 
   if (dumb_mode == 2 && no_forkserver)
     FATAL("AFL_DUMB_FORKSRV and AFL_NO_FORKSRV are mutually exclusive");
 
-  if (getenv("AFL_PRELOAD")) {
+  if (getenv("AFL_PRELOAD"))
+  {
     setenv("LD_PRELOAD", getenv("AFL_PRELOAD"), 1);
     setenv("DYLD_INSERT_LIBRARIES", getenv("AFL_PRELOAD"), 1);
   }
@@ -10081,13 +11243,16 @@ int main(int argc, char** argv) {
 
   pivot_inputs();
 
-  if (extras_dir) load_extras(extras_dir);
+  if (extras_dir)
+    load_extras(extras_dir);
 
-  if (!timeout_given) find_timeout();
+  if (!timeout_given)
+    find_timeout();
 
   detect_file_args(argv + optind + 1);
 
-  if (!out_file) setup_stdio_file();
+  if (!out_file)
+    setup_stdio_file();
 
   check_binary(argv[optind]);
 
@@ -10109,26 +11274,32 @@ int main(int argc, char** argv) {
   write_stats_file(0, 0, 0);
   save_auto();
 
-  if (stop_soon) goto stop_fuzzing;
+  if (stop_soon)
+    goto stop_fuzzing;
 
   /* Woop woop woop */
 
-  if (!not_on_tty) {
+  if (!not_on_tty)
+  {
     sleep(4);
     start_time += 4000;
-    if (stop_soon) goto stop_fuzzing;
+    if (stop_soon)
+      goto stop_fuzzing;
   }
 
-  if (seed_schedule_type == HYBRID_SCHEDULE) {
+  if (seed_schedule_type == HYBRID_SCHEDULE)
+  {
 
-    if (state_ids_count == 0) {
+    if (state_ids_count == 0)
+    {
       PFATAL("No server states have been detected. Server responses are likely empty!");
     }
 
-    char* time_gap_str = getenv("TIME_GAP");
+    char *time_gap_str = getenv("TIME_GAP");
     u32 time_gap = 600;
 
-    if (time_gap_str) {
+    if (time_gap_str)
+    {
 
       if (sscanf(time_gap_str, "%u", &time_gap) != 1)
         PFATAL("Setting time_gap failed!");
@@ -10136,14 +11307,17 @@ int main(int argc, char** argv) {
 
     last_path_time = get_cur_time();
 
-    while (1) {
+    while (1)
+    {
       u8 skipped_fuzz;
 
       /* Failed to find a new paths in the past 1 mins */
-      if (UR(100) < (get_cur_time() - last_path_time) / time_gap) {
+      if (UR(100) < (get_cur_time() - last_path_time) / time_gap)
+      {
         code_aware_schedule = 0;
         struct queue_entry *selected_seed = NULL;
-        while(!selected_seed || selected_seed->region_count == 0) {
+        while (!selected_seed || selected_seed->region_count == 0)
+        {
           /* choose a state */
           target_state_id = choose_target_state(state_selection_algo);
 
@@ -10152,7 +11326,8 @@ int main(int argc, char** argv) {
 
           /* Update number of times a state has been selected for targeted fuzzing */
           khint_t k = kh_get(hms, khms_states, target_state_id);
-          if (k != kh_end(khms_states)) {
+          if (k != kh_end(khms_states))
+          {
             kh_val(khms_states, k)->selected_times++;
           }
 
@@ -10160,38 +11335,45 @@ int main(int argc, char** argv) {
         }
 
         /* Seek to the selected seed */
-        if (selected_seed) {
-          if (!queue_cur) {
-              current_entry     = 0;
-              cur_skipped_paths = 0;
-              queue_cur         = queue;
-              queue_cycle++;
+        if (selected_seed)
+        {
+          if (!queue_cur)
+          {
+            current_entry = 0;
+            cur_skipped_paths = 0;
+            queue_cur = queue;
+            queue_cycle++;
           }
-          while (queue_cur != selected_seed) {
+          while (queue_cur != selected_seed)
+          {
             queue_cur = queue_cur->next;
             current_entry++;
-            if (!queue_cur) {
-              current_entry     = 0;
+            if (!queue_cur)
+            {
+              current_entry = 0;
               cur_skipped_paths = 0;
-              queue_cur         = queue;
+              queue_cur = queue;
               queue_cycle++;
             }
           }
         }
       }
-      else{
+      else
+      {
         code_aware_schedule = 1;
 
         cull_queue();
 
-        if (!queue_cur) {
+        if (!queue_cur)
+        {
 
           queue_cycle++;
-          current_entry     = 0;
+          current_entry = 0;
           cur_skipped_paths = 0;
-          queue_cur         = queue;
+          queue_cur = queue;
 
-          while (seek_to) {
+          while (seek_to)
+          {
             current_entry++;
             seek_to--;
             queue_cur = queue_cur->next;
@@ -10199,7 +11381,8 @@ int main(int argc, char** argv) {
 
           show_stats();
 
-          if (not_on_tty) {
+          if (not_on_tty)
+          {
             ACTF("Entering queue cycle %llu.", queue_cycle);
             fflush(stdout);
           }
@@ -10207,47 +11390,58 @@ int main(int argc, char** argv) {
           /* If we had a full queue cycle with no new finds, try
             recombination strategies next. */
 
-          if (queued_paths == prev_queued) {
+          if (queued_paths == prev_queued)
+          {
 
-            if (use_splicing) cycles_wo_finds++; else use_splicing = 1;
-
-          } else cycles_wo_finds = 0;
+            if (use_splicing)
+              cycles_wo_finds++;
+            else
+              use_splicing = 1;
+          }
+          else
+            cycles_wo_finds = 0;
 
           prev_queued = queued_paths;
-
         }
       }
 
       skipped_fuzz = fuzz_one(use_argv);
 
-      if (!stop_soon && sync_id && !skipped_fuzz) {
+      if (!stop_soon && sync_id && !skipped_fuzz)
+      {
 
         if (!(sync_interval_cnt++ % SYNC_INTERVAL))
           sync_fuzzers(use_argv);
-
       }
 
-      if (!stop_soon && exit_1) stop_soon = 2;
+      if (!stop_soon && exit_1)
+        stop_soon = 2;
 
-      if (stop_soon) break;
+      if (stop_soon)
+        break;
 
-      if (code_aware_schedule){
+      if (code_aware_schedule)
+      {
         queue_cur = queue_cur->next;
         current_entry++;
       }
     }
-
-  } else if (seed_schedule_type == IPSM_SCHEDULE){
+  }
+  else if (seed_schedule_type == IPSM_SCHEDULE)
+  {
     code_aware_schedule = 0;
-    if (state_ids_count == 0) {
+    if (state_ids_count == 0)
+    {
       PFATAL("No server states have been detected. Server responses are likely empty!");
     }
 
-    while (1) {
+    while (1)
+    {
       u8 skipped_fuzz;
 
       struct queue_entry *selected_seed = NULL;
-      while(!selected_seed || selected_seed->region_count == 0) {
+      while (!selected_seed || selected_seed->region_count == 0)
+      {
         target_state_id = choose_target_state(state_selection_algo);
 
         /* Update favorites based on the selected state */
@@ -10255,7 +11449,8 @@ int main(int argc, char** argv) {
 
         /* Update number of times a state has been selected for targeted fuzzing */
         khint_t k = kh_get(hms, khms_states, target_state_id);
-        if (k != kh_end(khms_states)) {
+        if (k != kh_end(khms_states))
+        {
           kh_val(khms_states, k)->selected_times++;
         }
 
@@ -10263,20 +11458,24 @@ int main(int argc, char** argv) {
       }
 
       /* Seek to the selected seed */
-      if (selected_seed) {
-        if (!queue_cur) {
-            current_entry     = 0;
-            cur_skipped_paths = 0;
-            queue_cur         = queue;
-            queue_cycle++;
+      if (selected_seed)
+      {
+        if (!queue_cur)
+        {
+          current_entry = 0;
+          cur_skipped_paths = 0;
+          queue_cur = queue;
+          queue_cycle++;
         }
-        while (queue_cur != selected_seed) {
+        while (queue_cur != selected_seed)
+        {
           queue_cur = queue_cur->next;
           current_entry++;
-          if (!queue_cur) {
-            current_entry     = 0;
+          if (!queue_cur)
+          {
+            current_entry = 0;
             cur_skipped_paths = 0;
-            queue_cur         = queue;
+            queue_cur = queue;
             queue_cycle++;
           }
         }
@@ -10284,32 +11483,38 @@ int main(int argc, char** argv) {
 
       skipped_fuzz = fuzz_one(use_argv);
 
-      if (!stop_soon && sync_id && !skipped_fuzz) {
+      if (!stop_soon && sync_id && !skipped_fuzz)
+      {
 
         if (!(sync_interval_cnt++ % SYNC_INTERVAL))
           sync_fuzzers(use_argv);
-
       }
 
-      if (!stop_soon && exit_1) stop_soon = 2;
+      if (!stop_soon && exit_1)
+        stop_soon = 2;
 
-      if (stop_soon) break;
+      if (stop_soon)
+        break;
     }
   }
-  else {
-    while (1) {
+  else
+  {
+    while (1)
+    {
       u8 skipped_fuzz;
 
       cull_queue();
 
-      if (!queue_cur) {
+      if (!queue_cur)
+      {
 
         queue_cycle++;
-        current_entry     = 0;
+        current_entry = 0;
         cur_skipped_paths = 0;
-        queue_cur         = queue;
+        queue_cur = queue;
 
-        while (seek_to) {
+        while (seek_to)
+        {
           current_entry++;
           seek_to--;
           queue_cur = queue_cur->next;
@@ -10317,7 +11522,8 @@ int main(int argc, char** argv) {
 
         show_stats();
 
-        if (not_on_tty) {
+        if (not_on_tty)
+        {
           ACTF("Entering queue cycle %llu.", queue_cycle);
           fflush(stdout);
         }
@@ -10325,48 +11531,58 @@ int main(int argc, char** argv) {
         /* If we had a full queue cycle with no new finds, try
            recombination strategies next. */
 
-        if (queued_paths == prev_queued) {
+        if (queued_paths == prev_queued)
+        {
 
-          if (use_splicing) cycles_wo_finds++; else use_splicing = 1;
-
-        } else cycles_wo_finds = 0;
+          if (use_splicing)
+            cycles_wo_finds++;
+          else
+            use_splicing = 1;
+        }
+        else
+          cycles_wo_finds = 0;
 
         prev_queued = queued_paths;
 
         if (sync_id && queue_cycle == 1 && getenv("AFL_IMPORT_FIRST"))
           sync_fuzzers(use_argv);
-
       }
 
       skipped_fuzz = fuzz_one(use_argv);
 
-      if (!stop_soon && sync_id && !skipped_fuzz) {
+      if (!stop_soon && sync_id && !skipped_fuzz)
+      {
 
         if (!(sync_interval_cnt++ % SYNC_INTERVAL))
           sync_fuzzers(use_argv);
-
       }
 
-      if (!stop_soon && exit_1) stop_soon = 2;
+      if (!stop_soon && exit_1)
+        stop_soon = 2;
 
-      if (stop_soon) break;
+      if (stop_soon)
+        break;
 
       queue_cur = queue_cur->next;
       current_entry++;
-
     }
   }
 
-  if (queue_cur) show_stats();
+  if (queue_cur)
+    show_stats();
 
   /* If we stopped programmatically, we kill the forkserver and the current runner.
      If we stopped manually, this is done by the signal handler. */
-  if (stop_soon == 2) {
-      if (child_pid > 0) kill(child_pid, SIGKILL);
-      if (forksrv_pid > 0) kill(forksrv_pid, SIGKILL);
+  if (stop_soon == 2)
+  {
+    if (child_pid > 0)
+      kill(child_pid, SIGKILL);
+    if (forksrv_pid > 0)
+      kill(forksrv_pid, SIGKILL);
   }
   /* Now that we've killed the forkserver, we wait for it to be able to get rusage stats. */
-  if (waitpid(forksrv_pid, NULL, 0) <= 0) {
+  if (waitpid(forksrv_pid, NULL, 0) <= 0)
+  {
     WARNF("error waitpid\n");
   }
 
@@ -10390,12 +11606,13 @@ stop_fuzzing:
 
   /* Running for more than 30 minutes but still doing first cycle? */
 
-  if (queue_cycle == 1 && get_cur_time() - start_time > 30 * 60 * 1000) {
+  if (queue_cycle == 1 && get_cur_time() - start_time > 30 * 60 * 1000)
+  {
 
     SAYF("\n" cYEL "[!] " cRST
-           "Stopped during the first cycle, results may be incomplete.\n"
-           "    (For info on resuming, see %s/README.)\n", doc_path);
-
+         "Stopped during the first cycle, results may be incomplete.\n"
+         "    (For info on resuming, see %s/README.)\n",
+         doc_path);
   }
 
   fclose(plot_file);
@@ -10412,7 +11629,6 @@ stop_fuzzing:
   OKF("We're done here. Have a nice day!\n");
 
   exit(0);
-
 }
 
 #endif /* !AFL_LIB */
