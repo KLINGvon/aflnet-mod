@@ -6036,6 +6036,23 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 
 }
 
+/*******************************************************
+ * 新增代码: 调试打印辅助函数 (DEBUG HELPER)          *
+ *******************************************************/
+static void print_boundaries_array(const char* label, u32* arr, u32 count, u32 total_len) {
+    fprintf(stderr, "DEBUG [%s]: temp_len=%u, M2_region_count=%u, Boundaries={ ", label, total_len, count);
+    if (arr) {
+        for (u32 i = 0; i <= count; i++) {
+            fprintf(stderr, "%u ", arr[i]);
+        }
+    } else {
+        fprintf(stderr, "NULL ");
+    }
+    fprintf(stderr, "}\n");
+    fflush(stderr);
+}
+/*******************************************************/
+
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
    skipped or bailed out. */
@@ -7487,52 +7504,119 @@ havoc_stage:
 
         case 11:
 
-          if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
+          // if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
 
-            /* Clone bytes (75%) or insert a block of constant bytes (25%). */
+          //   /* Clone bytes (75%) or insert a block of constant bytes (25%). */
+
+          //   u8  actually_clone = UR(4);
+          //   u32 clone_from, clone_to, clone_len;
+          //   u8* new_buf;
+
+          //   if (actually_clone) {
+
+          //     clone_len  = choose_block_len(temp_len);
+          //     clone_from = UR(temp_len - clone_len + 1);
+
+          //   } else {
+
+          //     clone_len = choose_block_len(HAVOC_BLK_XL);
+          //     clone_from = 0;
+
+          //   }
+
+          //   clone_to   = UR(temp_len);
+
+          //   new_buf = ck_alloc_nozero(temp_len + clone_len);
+
+          //   /* Head */
+
+          //   memcpy(new_buf, out_buf, clone_to);
+
+          //   /* Inserted part */
+
+          //   if (actually_clone)
+          //     memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
+          //   else
+          //     memset(new_buf + clone_to,
+          //            UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
+
+          //   /* Tail */
+          //   memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
+          //          temp_len - clone_to);
+
+          //   ck_free(out_buf);
+          //   out_buf = new_buf;
+          //   temp_len += clone_len;
+            
+          //   /*******************************************************
+          //    * 同步逻辑: 统一且正确的插入算法 (FIXED CODE)    *
+          //    *******************************************************/
+          //   u32 insert_at = clone_to;
+          //   u32 insert_len = clone_len;
+          //   u32 i_msg, insertion_idx = 0;
+
+          //   for (i_msg = 0; i_msg < M2_region_count; i_msg++) {
+          //       if (message_boundaries[i_msg + 1] >= insert_at) {
+          //           insertion_idx = i_msg + 1;
+          //           break;
+          //       }
+          //   }
+          //   if (i_msg == M2_region_count) insertion_idx = M2_region_count;
+
+          //   M2_region_count++;
+          //   message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
+            
+          //   memmove(&message_boundaries[insertion_idx + 1], 
+          //           &message_boundaries[insertion_idx],
+          //           sizeof(u32) * (M2_region_count - insertion_idx));
+
+          //   message_boundaries[insertion_idx] = insert_at;
+            
+          //   for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
+          //        message_boundaries[i_msg] += insert_len;
+          //   }
+
+          //   assert(message_boundaries[M2_region_count] == temp_len);
+          //   /*******************************************************/
+          // }
+
+          // break;
+
+          if (temp_len + HAVOC_BLK_XL >= MAX_FILE) break;
 
             u8  actually_clone = UR(4);
-            u32 clone_from, clone_to, clone_len;
+            u32 clone_from, clone_len;
             u8* new_buf;
-
+            
             if (actually_clone) {
-
               clone_len  = choose_block_len(temp_len);
               clone_from = UR(temp_len - clone_len + 1);
-
             } else {
-
               clone_len = choose_block_len(HAVOC_BLK_XL);
               clone_from = 0;
-
             }
+            u32 clone_to = UR(temp_len + 1);
 
-            clone_to   = UR(temp_len);
+            // --- 打印初始状态 ---
+            fprintf(stderr, "\n--- CASE 13 START ---\n");
+            print_boundaries_array("BEFORE MUTATION", message_boundaries, M2_region_count, temp_len);
+            fprintf(stderr, "DEBUG: clone_to=%u, clone_len=%u\n", clone_to, clone_len);
+            fflush(stderr);
 
             new_buf = ck_alloc_nozero(temp_len + clone_len);
-
-            /* Head */
-
             memcpy(new_buf, out_buf, clone_to);
-
-            /* Inserted part */
-
             if (actually_clone)
               memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
             else
-              memset(new_buf + clone_to,
-                     UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
-
-            /* Tail */
-            memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
-                   temp_len - clone_to);
-
+              memset(new_buf + clone_to, UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
+            memcpy(new_buf + clone_to + clone_len, out_buf + clone_to, temp_len - clone_to);
+            
             ck_free(out_buf);
             out_buf = new_buf;
             temp_len += clone_len;
             
             /*******************************************************
-             * 同步逻辑: 统一且正确的插入算法 (FIXED CODE)    *
+             * 同步逻辑: 最终修复版 (带调试打印)              *
              *******************************************************/
             u32 insert_at = clone_to;
             u32 insert_len = clone_len;
@@ -7545,25 +7629,31 @@ havoc_stage:
                 }
             }
             if (i_msg == M2_region_count) insertion_idx = M2_region_count;
+            
+            fprintf(stderr, "DEBUG: Found insertion_idx=%u\n", insertion_idx); fflush(stderr);
 
             M2_region_count++;
             message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
+            print_boundaries_array("AFTER REALLOC", message_boundaries, M2_region_count-1, temp_len);
             
             memmove(&message_boundaries[insertion_idx + 1], 
                     &message_boundaries[insertion_idx],
                     sizeof(u32) * (M2_region_count - insertion_idx));
+            print_boundaries_array("AFTER MEMMOVE", message_boundaries, M2_region_count, temp_len);
 
             message_boundaries[insertion_idx] = insert_at;
+            print_boundaries_array("AFTER INSERTING NEW BOUNDARY", message_boundaries, M2_region_count, temp_len);
             
             for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
                  message_boundaries[i_msg] += insert_len;
             }
+            print_boundaries_array("AFTER UPDATING SUBSEQUENT", message_boundaries, M2_region_count, temp_len);
 
+            fprintf(stderr, "--- ASSERTING NOW... ---\n"); fflush(stderr);
             assert(message_boundaries[M2_region_count] == temp_len);
             /*******************************************************/
-          }
-
-          break;
+            
+            break;
 
         case 12: {
 
@@ -7638,6 +7728,12 @@ havoc_stage:
             u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
             u8* new_buf;
 
+            // --- 打印初始状态 ---
+            fprintf(stderr, "\n--- CASE 16 START ---\n");
+            print_boundaries_array("BEFORE MUTATION", message_boundaries, M2_region_count, temp_len);
+            fprintf(stderr, "DEBUG: clone_to=%u, clone_len=%u\n", clone_to, clone_len);
+            fflush(stderr);
+
             /* Insert an extra. Do the same dice-rolling stuff as for the
                previous case. */
 
@@ -7696,24 +7792,36 @@ havoc_stage:
             }
             if (i_msg == M2_region_count) insertion_idx = M2_region_count;
 
+            fprintf(stderr, "DEBUG: Found insertion_idx=%u\n", insertion_idx); fflush(stderr);
+
             // 2. 消息总数+1, 并为边界数组扩容
             M2_region_count++;
             message_boundaries = ck_realloc(message_boundaries, sizeof(u32) * (M2_region_count + 1));
+
+            print_boundaries_array("AFTER REALLOC", message_boundaries, M2_region_count-1, temp_len);
             
             // 3. 为新边界腾出空间，将插入点之后的所有元素向后移动
             memmove(&message_boundaries[insertion_idx + 1], 
                     &message_boundaries[insertion_idx],
                     sizeof(u32) * (M2_region_count - insertion_idx));
 
+            print_boundaries_array("AFTER MEMMOVE", message_boundaries, M2_region_count, temp_len);
+
             // 4. 插入新的边界点。
             // 如果是在消息内部插入，这会成为一个分裂点。
             // 如果是在消息之间插入，这会成为新消息的结束点。
             message_boundaries[insertion_idx] = insert_at;
+
+            print_boundaries_array("AFTER INSERTING NEW BOUNDARY", message_boundaries, M2_region_count, temp_len);
             
             // 5. 更新所有在新插入边界点 *之后* 的边界点的值
             for (i_msg = insertion_idx + 1; i_msg <= M2_region_count; i_msg++) {
                  message_boundaries[i_msg] += extra_len; // <--- 使用对应的长度变量
             }
+
+            print_boundaries_array("AFTER UPDATING SUBSEQUENT", message_boundaries, M2_region_count, temp_len);
+
+            fprintf(stderr, "--- ASSERTING NOW... ---\n"); fflush(stderr);
 
             // 安全断言：检查最后一个边界点是否等于新的总长度
             assert(message_boundaries[M2_region_count] == temp_len);
