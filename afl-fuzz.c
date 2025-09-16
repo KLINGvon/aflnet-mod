@@ -7333,12 +7333,7 @@ havoc_stage:
 
       u8 structural_mutation = 0; // A flag to track if we need to rescan
 
-      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + \
-           (M2_region_count > 1 ? 2 : 0) + \
-           (M2_region_count >= 2 ? 2 : 0) + /* +2 for MSG_SWAP and MSG_OVERWRITE */ \
-           (M2_region_count >= 1 && temp_len > 1 ? 1 : 0))) {
-
-      // switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (M2_region_count > 1 ? 2 : 0))) {
+      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (temp_len >=2 && M2_region_count >=2 ? 1 : 0) + (temp_len >=1 && M2_region_count >=1 ? 1 : 0) + (M2_region_count > 1 ? 0 : 0) + (M2_region_count >= 1 && temp_len > 1 ? 0 : 0))) {
 
         case 0:
 
@@ -7796,7 +7791,7 @@ havoc_stage:
             break;
           }
 
-          /*******************************************************
+         /*******************************************************
          * 新增代码: 结构感知的变异算子 (MODIFIED CODE) *
          *******************************************************/
 
@@ -7937,7 +7932,7 @@ havoc_stage:
         /*******************************************************
          * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
          *******************************************************/
-        case 24: {
+        case 25: {
           /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
           if (M2_region_count < 1 || temp_len < 2) break;
           
@@ -7991,7 +7986,7 @@ havoc_stage:
         // /*******************************************************
         //  * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
         //  *******************************************************/
-        case 25: {
+        case 24: {
           /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
           if (M2_region_count < 2) break;
 
