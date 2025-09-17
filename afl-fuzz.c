@@ -7333,7 +7333,7 @@ havoc_stage:
 
       u8 structural_mutation = 0; // A flag to track if we need to rescan
 
-      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (temp_len >=2 && M2_region_count >=2 ? 1 : 0) + (temp_len >=1 && M2_region_count >=1 ? 1 : 0) + (M2_region_count > 1 ? 0 : 0) + (M2_region_count >= 1 && temp_len > 1 ? 0 : 0))) {
+      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (temp_len >=2 && M2_region_count >=2 ? 1 : 0) + (temp_len >=1 && M2_region_count >=1 ? 1 : 0) + (M2_region_count > 1 ? 2 : 0) + (M2_region_count >= 1 && temp_len > 1 ? 0 : 0))) {
 
         case 0:
 
@@ -7929,6 +7929,40 @@ havoc_stage:
           break;
         }
 
+        // /*******************************************************
+        //  * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
+        //  *******************************************************/
+        case 24: {
+          /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
+          if (M2_region_count < 2) break;
+
+          u32 target_idx, src_idx;
+          u32 target_start, target_len;
+          u32 src_start, src_len;
+
+          /* 1. 随机选择源消息和目标消息 */
+          target_idx = UR(M2_region_count);
+          do {
+            src_idx = UR(M2_region_count);
+          } while (target_idx == src_idx);
+          
+          target_start = message_boundaries[target_idx];
+          target_len   = message_boundaries[target_idx + 1] - target_start;
+
+          src_start = message_boundaries[src_idx];
+          src_len   = message_boundaries[src_idx + 1] - src_start;
+
+          /* 2. 将源消息的内容覆盖到目标消息的位置 */
+          /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
+          u32 overwrite_len = MIN(target_len, src_len);
+          if (overwrite_len > 0) {
+            memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
+          }
+
+          /* 缓冲区总长度不变 */
+          break;
+        }
+
         /*******************************************************
          * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
          *******************************************************/
@@ -7980,40 +8014,6 @@ havoc_stage:
           out_buf = new_buf;
           temp_len += insert_len;
           structural_mutation = 1;
-          break;
-        }
-
-        // /*******************************************************
-        //  * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
-        //  *******************************************************/
-        case 24: {
-          /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
-          if (M2_region_count < 2) break;
-
-          u32 target_idx, src_idx;
-          u32 target_start, target_len;
-          u32 src_start, src_len;
-
-          /* 1. 随机选择源消息和目标消息 */
-          target_idx = UR(M2_region_count);
-          do {
-            src_idx = UR(M2_region_count);
-          } while (target_idx == src_idx);
-          
-          target_start = message_boundaries[target_idx];
-          target_len   = message_boundaries[target_idx + 1] - target_start;
-
-          src_start = message_boundaries[src_idx];
-          src_len   = message_boundaries[src_idx + 1] - src_start;
-
-          /* 2. 将源消息的内容覆盖到目标消息的位置 */
-          /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
-          u32 overwrite_len = MIN(target_len, src_len);
-          if (overwrite_len > 0) {
-            memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
-          }
-
-          /* 缓冲区总长度不变 */
           break;
         }
 
