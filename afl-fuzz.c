@@ -7333,7 +7333,7 @@ havoc_stage:
 
       u8 structural_mutation = 0; // A flag to track if we need to rescan
 
-      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (temp_len >=2 && M2_region_count >=2 ? 1 : 0) + (temp_len >=1 && M2_region_count >=1 ? 1 : 0) + (M2_region_count > 1 ? 2 : 0) + (M2_region_count >= 1 && temp_len > 1 ? 1 : 0))) {
+      switch (UR(15 + 2 + (region_level_mutation ? 4 : 0) + (temp_len >=2 && M2_region_count >=2 ? 1 : 0) + (temp_len >=1 && M2_region_count >=1 ? 1 : 0) + (M2_region_count > 1 ? 2 : 0) /*+ (M2_region_count >= 1 && temp_len > 1 ? 0 : 0)*/ )) {
 
         case 0:
 
