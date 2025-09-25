@@ -7308,20 +7308,25 @@ havoc_stage:
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
 
+    if (out_buf != in_buf) ck_free(out_buf); // 释放上一轮可能分配的内存
+    out_buf = ck_alloc_nozero(len);
+    memcpy(out_buf, in_buf, len);
+    temp_len = len;
+
     u32 use_stacking = 1 << (1 + UR(HAVOC_STACK_POW2));
 
     stage_cur_val = use_stacking;
 
     // Restore buffer to its original state before each havoc cycle
-    if (temp_len != len || out_buf != in_buf) {
-        ck_free(out_buf); // free potentially reallocated buffer
-        out_buf = ck_alloc_nozero(len);
-        memcpy(out_buf, in_buf, len);
-        temp_len = len;
+    // if (temp_len != len || out_buf != in_buf) {
+    //     ck_free(out_buf); // free potentially reallocated buffer
+    //     out_buf = ck_alloc_nozero(len);
+    //     memcpy(out_buf, in_buf, len);
+    //     temp_len = len;
         
-        // IMPORTANT: Also restore the boundaries to match the clean buffer
-        rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
-    }
+    //     // IMPORTANT: Also restore the boundaries to match the clean buffer
+    //     rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
+    // }
 
     for (i = 0; i < use_stacking; i++) {
 
