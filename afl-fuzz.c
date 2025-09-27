@@ -7318,11 +7318,8 @@ havoc_stage:
 
     stage_cur_val = use_stacking;
 
-    int structural_mutation = 0; // 标记是否执行了大变异操作
-
     // Restore buffer to its original state before each havoc cycle
-    if (structural_mutation) {
-      if (temp_len != len || out_buf != in_buf) {
+    if (temp_len != len || out_buf != in_buf) {
         ck_free(out_buf); // free potentially reallocated buffer
         out_buf = ck_alloc_nozero(len);
         memcpy(out_buf, in_buf, len);
@@ -7331,11 +7328,9 @@ havoc_stage:
         // IMPORTANT: Also restore the boundaries to match the clean buffer
         rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
     }
-    }
-    
 
     for (i = 0; i < use_stacking; i++) {
-
+      
       int choice = UR(100);
 
       if (choice < 70) { // 70% 的概率
@@ -7343,7 +7338,7 @@ havoc_stage:
         // 在这个循环中，只执行那些不改变 temp_len 的、快速的变异
         // 这样就完全不需要 rescan
         for (i = 0; i < use_stacking; i++) {
-          switch (UR(21)) { // 只选那些安全的 case
+          switch (UR(14)) { // 只选那些安全的 case
             case 0:
 
               /* Flip a single bit somewhere. Spooky! */
@@ -7616,240 +7611,239 @@ havoc_stage:
               /* 缓冲区总长度不变 */
               break;
             }
-
-            case 14: {
-
-              /* Delete bytes. We're making this a bit more likely
-                than insertion (the next option) in hopes of keeping
-                files reasonably small. */
-
-              u32 del_from, del_len;
-
-              if (temp_len < 2) break;
-
-              /* Don't delete too much. */
-
-              del_len = choose_block_len(temp_len - 1);
-
-              del_from = UR(temp_len - del_len + 1);
-
-              memmove(out_buf + del_from, out_buf + del_from + del_len,
-                      temp_len - del_from - del_len);
-
-              temp_len -= del_len;
-
-              // structural_mutation = 1;
-
-              break;
-
-            }
-
-          case 15:
-
-            if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
-
-              /* Clone bytes (75%) or insert a block of constant bytes (25%). */
-
-              u8  actually_clone = UR(4);
-              u32 clone_from, clone_to, clone_len;
-              u8* new_buf;
-
-              if (actually_clone) {
-
-                clone_len  = choose_block_len(temp_len);
-                clone_from = UR(temp_len - clone_len + 1);
-
-              } else {
-
-                clone_len = choose_block_len(HAVOC_BLK_XL);
-                clone_from = 0;
-
-              }
-
-              clone_to = UR(temp_len);
-
-              new_buf = ck_alloc_nozero(temp_len + clone_len);
-
-              /* Head */
-
-              memcpy(new_buf, out_buf, clone_to);
-
-              /* Inserted part */
-
-              if (actually_clone)
-                memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
-              else
-                memset(new_buf + clone_to,
-                      UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
-
-              /* Tail */
-              memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
-                    temp_len - clone_to);
-
-              ck_free(out_buf);
-              out_buf = new_buf;
-              temp_len += clone_len;
-
-              // structural_mutation = 1;
-
-            }
-
-            break;
-            
-            case 16: {
-              if (extras_cnt + a_extras_cnt == 0) break;
-
-              u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
-              u8* new_buf;
-
-              /* Insert an extra. Do the same dice-rolling stuff as for the
-                previous case. */
-
-              if (!extras_cnt || (a_extras_cnt && UR(2))) {
-
-                use_extra = UR(a_extras_cnt);
-                extra_len = a_extras[use_extra].len;
-
-                if (temp_len + extra_len >= MAX_FILE) break;
-
-                new_buf = ck_alloc_nozero(temp_len + extra_len);
-
-                /* Head */
-                memcpy(new_buf, out_buf, insert_at);
-
-                /* Inserted part */
-                memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
-
-              } else {
-
-                use_extra = UR(extras_cnt);
-                extra_len = extras[use_extra].len;
-
-                if (temp_len + extra_len >= MAX_FILE) break;
-
-                new_buf = ck_alloc_nozero(temp_len + extra_len);
-
-                /* Head */
-                memcpy(new_buf, out_buf, insert_at);
-
-                /* Inserted part */
-                memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
-
-              }
-
-              /* Tail */
-              memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
-                    temp_len - insert_at);
-
-              ck_free(out_buf);
-              out_buf   = new_buf;
-              temp_len += extra_len;
-
-              // structural_mutation = 1;
-
-              break;
-
-            }
-          /* Values 17 to 20 can be selected only if region-level mutations are enabled */
-
-          /* Replace the current region with a random region from a random seed */
-          case 17: {
-              u32 src_region_len = 0;
-              u8* new_buf = choose_source_region(&src_region_len);
-              if (new_buf == NULL) break;
-
-              //replace the current region
-              ck_free(out_buf);
-              out_buf = new_buf;
-              temp_len = src_region_len;
-              // structural_mutation = 1;
-              break;
-            }
-
-          /* Insert a random region from a random seed to the beginning of the current region */
-          case 18: {
-              u32 src_region_len = 0;
-              u8* src_region = choose_source_region(&src_region_len);
-              if (src_region == NULL) break;
-
-              if (temp_len + src_region_len >= MAX_FILE) {
-                ck_free(src_region);
-                break;
-              }
-
-              u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
-
-              memcpy(new_buf, src_region, src_region_len);
-
-              memcpy(&new_buf[src_region_len], out_buf, temp_len);
-
-              ck_free(out_buf);
-              ck_free(src_region);
-              out_buf = new_buf;
-              temp_len += src_region_len;
-              // structural_mutation = 1;
-              break;
-            }
-
-          /* Insert a random region from a random seed to the end of the current region */
-          case 19: {
-              u32 src_region_len = 0;
-              u8* src_region = choose_source_region(&src_region_len);
-              if (src_region == NULL) break;
-
-              if (temp_len + src_region_len >= MAX_FILE) {
-                ck_free(src_region);
-                break;
-              }
-
-              u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
-
-              memcpy(new_buf, out_buf, temp_len);
-
-              memcpy(&new_buf[temp_len], src_region, src_region_len);
-
-              ck_free(out_buf);
-              ck_free(src_region);
-              out_buf = new_buf;
-              temp_len += src_region_len;
-              // structural_mutation = 1;
-              break;
-            }
-
-          /* Duplicate the current region */
-          case 20: {
-              if (temp_len * 2 >= MAX_FILE) break;
-
-              u8* new_buf = ck_alloc_nozero(temp_len * 2);
-
-              memcpy(new_buf, out_buf, temp_len);
-
-              memcpy(&new_buf[temp_len], out_buf, temp_len);
-
-              ck_free(out_buf);
-              out_buf = new_buf;
-              temp_len += temp_len;
-              // structural_mutation = 1;
-              break;
-            }
           }
         }
         
         // --- 策略2: 低概率执行慢速但强大的结构化变异 ---
-        } else { // 20% 的概率
+        } else { // 30% 的概率
 
             // **只执行一次结构化变异**，避免性能雪崩
             // 这里的 rescan 是为了确保，以防万一之前的操作弄乱了边界（虽然我们已经分离了）
             rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
 
-            switch (UR(4)) { // 选择所有会改变结构的 case
+            switch (UR(11)) { // 选择所有会改变结构的 case
+                case 0: {
+
+                  /* Delete bytes. We're making this a bit more likely
+                    than insertion (the next option) in hopes of keeping
+                    files reasonably small. */
+
+                  u32 del_from, del_len;
+
+                  if (temp_len < 2) break;
+
+                  /* Don't delete too much. */
+
+                  del_len = choose_block_len(temp_len - 1);
+
+                  del_from = UR(temp_len - del_len + 1);
+
+                  memmove(out_buf + del_from, out_buf + del_from + del_len,
+                          temp_len - del_from - del_len);
+
+                  temp_len -= del_len;
+
+                  // structural_mutation = 1;
+
+                  break;
+
+                }
+
+              case 1:
+
+                if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
+
+                  /* Clone bytes (75%) or insert a block of constant bytes (25%). */
+
+                  u8  actually_clone = UR(4);
+                  u32 clone_from, clone_to, clone_len;
+                  u8* new_buf;
+
+                  if (actually_clone) {
+
+                    clone_len  = choose_block_len(temp_len);
+                    clone_from = UR(temp_len - clone_len + 1);
+
+                  } else {
+
+                    clone_len = choose_block_len(HAVOC_BLK_XL);
+                    clone_from = 0;
+
+                  }
+
+                  clone_to = UR(temp_len);
+
+                  new_buf = ck_alloc_nozero(temp_len + clone_len);
+
+                  /* Head */
+
+                  memcpy(new_buf, out_buf, clone_to);
+
+                  /* Inserted part */
+
+                  if (actually_clone)
+                    memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
+                  else
+                    memset(new_buf + clone_to,
+                          UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
+
+                  /* Tail */
+                  memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
+                        temp_len - clone_to);
+
+                  ck_free(out_buf);
+                  out_buf = new_buf;
+                  temp_len += clone_len;
+
+                  // structural_mutation = 1;
+
+                }
+
+                break;
+                
+                case 2: {
+                  if (extras_cnt + a_extras_cnt == 0) break;
+
+                  u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
+                  u8* new_buf;
+
+                  /* Insert an extra. Do the same dice-rolling stuff as for the
+                    previous case. */
+
+                  if (!extras_cnt || (a_extras_cnt && UR(2))) {
+
+                    use_extra = UR(a_extras_cnt);
+                    extra_len = a_extras[use_extra].len;
+
+                    if (temp_len + extra_len >= MAX_FILE) break;
+
+                    new_buf = ck_alloc_nozero(temp_len + extra_len);
+
+                    /* Head */
+                    memcpy(new_buf, out_buf, insert_at);
+
+                    /* Inserted part */
+                    memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
+
+                  } else {
+
+                    use_extra = UR(extras_cnt);
+                    extra_len = extras[use_extra].len;
+
+                    if (temp_len + extra_len >= MAX_FILE) break;
+
+                    new_buf = ck_alloc_nozero(temp_len + extra_len);
+
+                    /* Head */
+                    memcpy(new_buf, out_buf, insert_at);
+
+                    /* Inserted part */
+                    memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
+
+                  }
+
+                  /* Tail */
+                  memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
+                        temp_len - insert_at);
+
+                  ck_free(out_buf);
+                  out_buf   = new_buf;
+                  temp_len += extra_len;
+
+                  // structural_mutation = 1;
+
+                  break;
+
+                }
+              /* Values 17 to 20 can be selected only if region-level mutations are enabled */
+
+              /* Replace the current region with a random region from a random seed */
+              case 3: {
+                  u32 src_region_len = 0;
+                  u8* new_buf = choose_source_region(&src_region_len);
+                  if (new_buf == NULL) break;
+
+                  //replace the current region
+                  ck_free(out_buf);
+                  out_buf = new_buf;
+                  temp_len = src_region_len;
+                  // structural_mutation = 1;
+                  break;
+                }
+
+              /* Insert a random region from a random seed to the beginning of the current region */
+              case 4: {
+                  u32 src_region_len = 0;
+                  u8* src_region = choose_source_region(&src_region_len);
+                  if (src_region == NULL) break;
+
+                  if (temp_len + src_region_len >= MAX_FILE) {
+                    ck_free(src_region);
+                    break;
+                  }
+
+                  u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
+
+                  memcpy(new_buf, src_region, src_region_len);
+
+                  memcpy(&new_buf[src_region_len], out_buf, temp_len);
+
+                  ck_free(out_buf);
+                  ck_free(src_region);
+                  out_buf = new_buf;
+                  temp_len += src_region_len;
+                  // structural_mutation = 1;
+                  break;
+                }
+
+              /* Insert a random region from a random seed to the end of the current region */
+              case 5: {
+                  u32 src_region_len = 0;
+                  u8* src_region = choose_source_region(&src_region_len);
+                  if (src_region == NULL) break;
+
+                  if (temp_len + src_region_len >= MAX_FILE) {
+                    ck_free(src_region);
+                    break;
+                  }
+
+                  u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
+
+                  memcpy(new_buf, out_buf, temp_len);
+
+                  memcpy(&new_buf[temp_len], src_region, src_region_len);
+
+                  ck_free(out_buf);
+                  ck_free(src_region);
+                  out_buf = new_buf;
+                  temp_len += src_region_len;
+                  // structural_mutation = 1;
+                  break;
+                }
+
+              /* Duplicate the current region */
+              case 6: {
+                  if (temp_len * 2 >= MAX_FILE) break;
+
+                  u8* new_buf = ck_alloc_nozero(temp_len * 2);
+
+                  memcpy(new_buf, out_buf, temp_len);
+
+                  memcpy(&new_buf[temp_len], out_buf, temp_len);
+
+                  ck_free(out_buf);
+                  out_buf = new_buf;
+                  temp_len += temp_len;
+                  // structural_mutation = 1;
+                  break;
+                }
 
               /*******************************************************
                * 新增代码: 结构感知的变异算子 (MODIFIED CODE) *
                *******************************************************/
 
               /* MSG_DELETE: 删除一个完整的消息 */
-              case 0: {
+              case 7: {
 
                 /* 只有在至少有两条消息时，删除才有意义 */
                 if (temp_len < 2 || M2_region_count < 2) break;
@@ -7868,12 +7862,12 @@ havoc_stage:
 
                 /* 更新缓冲区的总长度 */
                 temp_len -= msg_len_del;
-                structural_mutation = 1;
+                // structural_mutation = 1;
                 break;
               }
 
               /* MSG_DUPLICATE: 复制一个完整的消息 */
-              case 1: {
+              case 8: {
 
                 /* 只有在有消息可复制时才执行 */
                 if (temp_len < 1 || M2_region_count < 1) break;
@@ -7910,7 +7904,7 @@ havoc_stage:
                 
                 /* 更新缓冲区的总长度 */
                 temp_len += msg_len_dup;
-                structural_mutation = 1;
+                // structural_mutation = 1;
                 break;
               }
             /*******************************************************
@@ -7920,7 +7914,7 @@ havoc_stage:
               /*******************************************************
                * 新增变异算子: 消息交换 (MSG_SWAP)          *
                *******************************************************/
-              case 2: {
+              case 9: {
                 /* 前提条件：必须至少有两条消息才能交换 */
                 if (M2_region_count < 2) break;
 
@@ -7978,14 +7972,14 @@ havoc_stage:
                 out_buf = new_buf;
                 
                 /* 总长度不变 */
-                structural_mutation = 1;
+                // structural_mutation = 1;
                 break;
               }
 
               /*******************************************************
                * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
                *******************************************************/
-              case 3: {
+              case 10: {
                 /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
                 if (M2_region_count < 1 || temp_len < 2) break;
                 
@@ -8032,7 +8026,7 @@ havoc_stage:
                 ck_free(out_buf);
                 out_buf = new_buf;
                 temp_len += insert_len;
-                structural_mutation = 1;
+                // structural_mutation = 1;
                 break;
               }
             }
