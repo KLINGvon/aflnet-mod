@@ -7320,7 +7320,7 @@ havoc_stage:
 
     // Restore buffer to its original state before each havoc cycle
     if (temp_len != len || out_buf != in_buf) {
-        ck_free(out_buf); // free potentially reallocated buffer
+        // ck_free(out_buf); // free potentially reallocated buffer
         out_buf = ck_alloc_nozero(len);
         memcpy(out_buf, in_buf, len);
         temp_len = len;
