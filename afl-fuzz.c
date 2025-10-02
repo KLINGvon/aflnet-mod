@@ -7331,9 +7331,9 @@ havoc_stage:
 
     for (i = 0; i < use_stacking; i++) {
       
-      int choice = UR(10);
+      int choice = UR(100);
 
-      if (choice < 5) { // 70% 的概率
+      if (choice < 60) { // 70% 的概率
             
         // 在这个循环中，只执行那些不改变 temp_len 的、快速的变异
         // 这样就完全不需要 rescan
