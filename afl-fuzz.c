@@ -7331,711 +7331,1386 @@ havoc_stage:
 
     for (i = 0; i < use_stacking; i++) {
       
-      int choice = UR(100);
+      // int choice = UR(100);
 
-      if (choice < 60) { // 70% 的概率
+      // if (choice < 60) { // 70% 的概率
             
-        // 在这个循环中，只执行那些不改变 temp_len 的、快速的变异
-        // 这样就完全不需要 rescan
-        for (i = 0; i < use_stacking; i++) {
-          switch (UR(14)) { // 只选那些安全的 case
-            case 0:
+      //   // 在这个循环中，只执行那些不改变 temp_len 的、快速的变异
+      //   // 这样就完全不需要 rescan
+      //   for (i = 0; i < use_stacking; i++) {
+      //     switch (UR(14)) { // 只选那些安全的 case
+      //       case 0:
 
-              /* Flip a single bit somewhere. Spooky! */
+      //         /* Flip a single bit somewhere. Spooky! */
 
-              FLIP_BIT(out_buf, UR(temp_len << 3));
-              break;
+      //         FLIP_BIT(out_buf, UR(temp_len << 3));
+      //         break;
 
-            case 1:
+      //       case 1:
 
-              /* Set byte to interesting value. */
+      //         /* Set byte to interesting value. */
 
-              out_buf[UR(temp_len)] = interesting_8[UR(sizeof(interesting_8))];
-              break;
+      //         out_buf[UR(temp_len)] = interesting_8[UR(sizeof(interesting_8))];
+      //         break;
 
-            case 2:
+      //       case 2:
 
-              /* Set word to interesting value, randomly choosing endian. */
+      //         /* Set word to interesting value, randomly choosing endian. */
 
-              if (temp_len < 2) break;
+      //         if (temp_len < 2) break;
 
-              if (UR(2)) {
+      //         if (UR(2)) {
 
-                *(u16*)(out_buf + UR(temp_len - 1)) =
-                  interesting_16[UR(sizeof(interesting_16) >> 1)];
+      //           *(u16*)(out_buf + UR(temp_len - 1)) =
+      //             interesting_16[UR(sizeof(interesting_16) >> 1)];
 
-              } else {
+      //         } else {
 
-                *(u16*)(out_buf + UR(temp_len - 1)) = SWAP16(
-                  interesting_16[UR(sizeof(interesting_16) >> 1)]);
+      //           *(u16*)(out_buf + UR(temp_len - 1)) = SWAP16(
+      //             interesting_16[UR(sizeof(interesting_16) >> 1)]);
 
-              }
+      //         }
 
-              break;
+      //         break;
 
-            case 3:
+      //       case 3:
 
-              /* Set dword to interesting value, randomly choosing endian. */
+      //         /* Set dword to interesting value, randomly choosing endian. */
 
-              if (temp_len < 4) break;
+      //         if (temp_len < 4) break;
 
-              if (UR(2)) {
+      //         if (UR(2)) {
 
-                *(u32*)(out_buf + UR(temp_len - 3)) =
-                  interesting_32[UR(sizeof(interesting_32) >> 2)];
+      //           *(u32*)(out_buf + UR(temp_len - 3)) =
+      //             interesting_32[UR(sizeof(interesting_32) >> 2)];
 
-              } else {
+      //         } else {
 
-                *(u32*)(out_buf + UR(temp_len - 3)) = SWAP32(
-                  interesting_32[UR(sizeof(interesting_32) >> 2)]);
+      //           *(u32*)(out_buf + UR(temp_len - 3)) = SWAP32(
+      //             interesting_32[UR(sizeof(interesting_32) >> 2)]);
 
-              }
+      //         }
 
-              break;
+      //         break;
 
-            case 4:
+      //       case 4:
 
-              /* Randomly subtract from byte. */
+      //         /* Randomly subtract from byte. */
 
-              out_buf[UR(temp_len)] -= 1 + UR(ARITH_MAX);
-              break;
+      //         out_buf[UR(temp_len)] -= 1 + UR(ARITH_MAX);
+      //         break;
 
-            case 5:
+      //       case 5:
 
-              /* Randomly add to byte. */
+      //         /* Randomly add to byte. */
 
-              out_buf[UR(temp_len)] += 1 + UR(ARITH_MAX);
-              break;
+      //         out_buf[UR(temp_len)] += 1 + UR(ARITH_MAX);
+      //         break;
 
-            case 6:
+      //       case 6:
 
-              /* Randomly subtract from word, random endian. */
+      //         /* Randomly subtract from word, random endian. */
 
-              if (temp_len < 2) break;
+      //         if (temp_len < 2) break;
 
-              if (UR(2)) {
+      //         if (UR(2)) {
 
-                u32 pos = UR(temp_len - 1);
+      //           u32 pos = UR(temp_len - 1);
 
-                *(u16*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
+      //           *(u16*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
 
-              } else {
+      //         } else {
 
-                u32 pos = UR(temp_len - 1);
-                u16 num = 1 + UR(ARITH_MAX);
+      //           u32 pos = UR(temp_len - 1);
+      //           u16 num = 1 + UR(ARITH_MAX);
 
-                *(u16*)(out_buf + pos) =
-                  SWAP16(SWAP16(*(u16*)(out_buf + pos)) - num);
+      //           *(u16*)(out_buf + pos) =
+      //             SWAP16(SWAP16(*(u16*)(out_buf + pos)) - num);
 
-              }
+      //         }
 
-              break;
+      //         break;
 
-            case 7:
+      //       case 7:
 
-              /* Randomly add to word, random endian. */
+      //         /* Randomly add to word, random endian. */
 
-              if (temp_len < 2) break;
+      //         if (temp_len < 2) break;
 
-              if (UR(2)) {
+      //         if (UR(2)) {
 
-                u32 pos = UR(temp_len - 1);
+      //           u32 pos = UR(temp_len - 1);
 
-                *(u16*)(out_buf + pos) += 1 + UR(ARITH_MAX);
+      //           *(u16*)(out_buf + pos) += 1 + UR(ARITH_MAX);
 
-              } else {
+      //         } else {
 
-                u32 pos = UR(temp_len - 1);
-                u16 num = 1 + UR(ARITH_MAX);
+      //           u32 pos = UR(temp_len - 1);
+      //           u16 num = 1 + UR(ARITH_MAX);
 
-                *(u16*)(out_buf + pos) =
-                  SWAP16(SWAP16(*(u16*)(out_buf + pos)) + num);
+      //           *(u16*)(out_buf + pos) =
+      //             SWAP16(SWAP16(*(u16*)(out_buf + pos)) + num);
 
-              }
+      //         }
 
-              break;
+      //         break;
 
-            case 8:
+      //       case 8:
 
-              /* Randomly subtract from dword, random endian. */
+      //         /* Randomly subtract from dword, random endian. */
 
-              if (temp_len < 4) break;
+      //         if (temp_len < 4) break;
 
-              if (UR(2)) {
+      //         if (UR(2)) {
 
-                u32 pos = UR(temp_len - 3);
+      //           u32 pos = UR(temp_len - 3);
 
-                *(u32*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
+      //           *(u32*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
 
-              } else {
+      //         } else {
 
-                u32 pos = UR(temp_len - 3);
-                u32 num = 1 + UR(ARITH_MAX);
+      //           u32 pos = UR(temp_len - 3);
+      //           u32 num = 1 + UR(ARITH_MAX);
 
-                *(u32*)(out_buf + pos) =
-                  SWAP32(SWAP32(*(u32*)(out_buf + pos)) - num);
+      //           *(u32*)(out_buf + pos) =
+      //             SWAP32(SWAP32(*(u32*)(out_buf + pos)) - num);
 
-              }
+      //         }
 
-              break;
+      //         break;
 
-            case 9:
+      //       case 9:
 
-              /* Randomly add to dword, random endian. */
+      //         /* Randomly add to dword, random endian. */
 
-              if (temp_len < 4) break;
+      //         if (temp_len < 4) break;
 
-              if (UR(2)) {
+      //         if (UR(2)) {
 
-                u32 pos = UR(temp_len - 3);
+      //           u32 pos = UR(temp_len - 3);
 
-                *(u32*)(out_buf + pos) += 1 + UR(ARITH_MAX);
+      //           *(u32*)(out_buf + pos) += 1 + UR(ARITH_MAX);
 
-              } else {
+      //         } else {
 
-                u32 pos = UR(temp_len - 3);
-                u32 num = 1 + UR(ARITH_MAX);
+      //           u32 pos = UR(temp_len - 3);
+      //           u32 num = 1 + UR(ARITH_MAX);
 
-                *(u32*)(out_buf + pos) =
-                  SWAP32(SWAP32(*(u32*)(out_buf + pos)) + num);
+      //           *(u32*)(out_buf + pos) =
+      //             SWAP32(SWAP32(*(u32*)(out_buf + pos)) + num);
 
-              }
+      //         }
 
-              break;
+      //         break;
 
-            case 10:
+      //       case 10:
 
-              /* Just set a random byte to a random value. Because,
-                why not. We use XOR with 1-255 to eliminate the
-                possibility of a no-op. */
+      //         /* Just set a random byte to a random value. Because,
+      //           why not. We use XOR with 1-255 to eliminate the
+      //           possibility of a no-op. */
 
-              out_buf[UR(temp_len)] ^= 1 + UR(255);
-              break;
+      //         out_buf[UR(temp_len)] ^= 1 + UR(255);
+      //         break;
 
-            case 11: {
+      //       case 11: {
 
-                /* Overwrite bytes with a randomly selected chunk (75%) or fixed
-                  bytes (25%). */
+      //           /* Overwrite bytes with a randomly selected chunk (75%) or fixed
+      //             bytes (25%). */
 
-                u32 copy_from, copy_to, copy_len;
+      //           u32 copy_from, copy_to, copy_len;
 
-                if (temp_len < 2) break;
+      //           if (temp_len < 2) break;
 
-                copy_len  = choose_block_len(temp_len - 1);
+      //           copy_len  = choose_block_len(temp_len - 1);
 
-                copy_from = UR(temp_len - copy_len + 1);
-                copy_to   = UR(temp_len - copy_len + 1);
+      //           copy_from = UR(temp_len - copy_len + 1);
+      //           copy_to   = UR(temp_len - copy_len + 1);
 
-                if (UR(4)) {
+      //           if (UR(4)) {
 
-                  if (copy_from != copy_to)
-                    memmove(out_buf + copy_to, out_buf + copy_from, copy_len);
+      //             if (copy_from != copy_to)
+      //               memmove(out_buf + copy_to, out_buf + copy_from, copy_len);
 
-                } else memset(out_buf + copy_to,
-                              UR(2) ? UR(256) : out_buf[UR(temp_len)], copy_len);
+      //           } else memset(out_buf + copy_to,
+      //                         UR(2) ? UR(256) : out_buf[UR(temp_len)], copy_len);
 
-                break;
+      //           break;
 
-              }
+      //         }
 
-            /* Values 15 and 16 can be selected only if there are any extras
-              present in the dictionaries. */
+      //       /* Values 15 and 16 can be selected only if there are any extras
+      //         present in the dictionaries. */
 
-            case 12: {
-                if (extras_cnt + a_extras_cnt == 0) break;
+      //       case 12: {
+      //           if (extras_cnt + a_extras_cnt == 0) break;
 
-                /* Overwrite bytes with an extra. */
+      //           /* Overwrite bytes with an extra. */
 
-                if (!extras_cnt || (a_extras_cnt && UR(2))) {
+      //           if (!extras_cnt || (a_extras_cnt && UR(2))) {
 
-                  /* No user-specified extras or odds in our favor. Let's use an
-                    auto-detected one. */
+      //             /* No user-specified extras or odds in our favor. Let's use an
+      //               auto-detected one. */
 
-                  u32 use_extra = UR(a_extras_cnt);
-                  u32 extra_len = a_extras[use_extra].len;
-                  u32 insert_at;
+      //             u32 use_extra = UR(a_extras_cnt);
+      //             u32 extra_len = a_extras[use_extra].len;
+      //             u32 insert_at;
 
-                  if (extra_len > temp_len) break;
+      //             if (extra_len > temp_len) break;
 
-                  insert_at = UR(temp_len - extra_len + 1);
-                  memcpy(out_buf + insert_at, a_extras[use_extra].data, extra_len);
+      //             insert_at = UR(temp_len - extra_len + 1);
+      //             memcpy(out_buf + insert_at, a_extras[use_extra].data, extra_len);
 
-                } else {
+      //           } else {
 
-                  /* No auto extras or odds in our favor. Use the dictionary. */
+      //             /* No auto extras or odds in our favor. Use the dictionary. */
 
-                  u32 use_extra = UR(extras_cnt);
-                  u32 extra_len = extras[use_extra].len;
-                  u32 insert_at;
+      //             u32 use_extra = UR(extras_cnt);
+      //             u32 extra_len = extras[use_extra].len;
+      //             u32 insert_at;
 
-                  if (extra_len > temp_len) break;
+      //             if (extra_len > temp_len) break;
 
-                  insert_at = UR(temp_len - extra_len + 1);
-                  memcpy(out_buf + insert_at, extras[use_extra].data, extra_len);
+      //             insert_at = UR(temp_len - extra_len + 1);
+      //             memcpy(out_buf + insert_at, extras[use_extra].data, extra_len);
 
-                }
+      //           }
 
-                break;
+      //           break;
 
-            }
-            // /*******************************************************
-            //  * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
-            //  *******************************************************/
-            case 13: {
-              /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
-              if (M2_region_count < 2) break;
+      //       }
+      //       // /*******************************************************
+      //       //  * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
+      //       //  *******************************************************/
+      //       case 13: {
+      //         /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
+      //         if (M2_region_count < 2) break;
 
-              u32 target_idx, src_idx;
-              u32 target_start, target_len;
-              u32 src_start, src_len;
+      //         u32 target_idx, src_idx;
+      //         u32 target_start, target_len;
+      //         u32 src_start, src_len;
 
-              /* 1. 随机选择源消息和目标消息 */
-              target_idx = UR(M2_region_count);
-              do {
-                src_idx = UR(M2_region_count);
-              } while (target_idx == src_idx);
+      //         /* 1. 随机选择源消息和目标消息 */
+      //         target_idx = UR(M2_region_count);
+      //         do {
+      //           src_idx = UR(M2_region_count);
+      //         } while (target_idx == src_idx);
               
-              target_start = message_boundaries[target_idx];
-              target_len   = message_boundaries[target_idx + 1] - target_start;
+      //         target_start = message_boundaries[target_idx];
+      //         target_len   = message_boundaries[target_idx + 1] - target_start;
 
-              src_start = message_boundaries[src_idx];
-              src_len   = message_boundaries[src_idx + 1] - src_start;
+      //         src_start = message_boundaries[src_idx];
+      //         src_len   = message_boundaries[src_idx + 1] - src_start;
 
-              /* 2. 将源消息的内容覆盖到目标消息的位置 */
-              /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
-              u32 overwrite_len = MIN(target_len, src_len);
-              if (overwrite_len > 0) {
-                memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
-              }
+      //         /* 2. 将源消息的内容覆盖到目标消息的位置 */
+      //         /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
+      //         u32 overwrite_len = MIN(target_len, src_len);
+      //         if (overwrite_len > 0) {
+      //           memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
+      //         }
 
-              /* 缓冲区总长度不变 */
+      //         /* 缓冲区总长度不变 */
+      //         break;
+      //       }
+      //     }
+      //   }
+        
+      //   // --- 策略2: 低概率执行慢速但强大的结构化变异 ---
+      //   } else { // 30% 的概率
+
+      //       // **只执行一次结构化变异**，避免性能雪崩
+      //       // 这里的 rescan 是为了确保，以防万一之前的操作弄乱了边界（虽然我们已经分离了）
+      //       rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
+
+      //       switch (UR(11)) { // 选择所有会改变结构的 case
+      //           case 0: {
+
+      //             /* Delete bytes. We're making this a bit more likely
+      //               than insertion (the next option) in hopes of keeping
+      //               files reasonably small. */
+
+      //             u32 del_from, del_len;
+
+      //             if (temp_len < 2) break;
+
+      //             /* Don't delete too much. */
+
+      //             del_len = choose_block_len(temp_len - 1);
+
+      //             del_from = UR(temp_len - del_len + 1);
+
+      //             memmove(out_buf + del_from, out_buf + del_from + del_len,
+      //                     temp_len - del_from - del_len);
+
+      //             temp_len -= del_len;
+
+      //             // structural_mutation = 1;
+
+      //             break;
+
+      //           }
+
+      //         case 1:
+
+      //           if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
+
+      //             /* Clone bytes (75%) or insert a block of constant bytes (25%). */
+
+      //             u8  actually_clone = UR(4);
+      //             u32 clone_from, clone_to, clone_len;
+      //             u8* new_buf;
+
+      //             if (actually_clone) {
+
+      //               clone_len  = choose_block_len(temp_len);
+      //               clone_from = UR(temp_len - clone_len + 1);
+
+      //             } else {
+
+      //               clone_len = choose_block_len(HAVOC_BLK_XL);
+      //               clone_from = 0;
+
+      //             }
+
+      //             clone_to = UR(temp_len);
+
+      //             new_buf = ck_alloc_nozero(temp_len + clone_len);
+
+      //             /* Head */
+
+      //             memcpy(new_buf, out_buf, clone_to);
+
+      //             /* Inserted part */
+
+      //             if (actually_clone)
+      //               memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
+      //             else
+      //               memset(new_buf + clone_to,
+      //                     UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
+
+      //             /* Tail */
+      //             memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
+      //                   temp_len - clone_to);
+
+      //             ck_free(out_buf);
+      //             out_buf = new_buf;
+      //             temp_len += clone_len;
+
+      //             // structural_mutation = 1;
+
+      //           }
+
+      //           break;
+                
+      //           case 2: {
+      //             if (extras_cnt + a_extras_cnt == 0) break;
+
+      //             u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
+      //             u8* new_buf;
+
+      //             /* Insert an extra. Do the same dice-rolling stuff as for the
+      //               previous case. */
+
+      //             if (!extras_cnt || (a_extras_cnt && UR(2))) {
+
+      //               use_extra = UR(a_extras_cnt);
+      //               extra_len = a_extras[use_extra].len;
+
+      //               if (temp_len + extra_len >= MAX_FILE) break;
+
+      //               new_buf = ck_alloc_nozero(temp_len + extra_len);
+
+      //               /* Head */
+      //               memcpy(new_buf, out_buf, insert_at);
+
+      //               /* Inserted part */
+      //               memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
+
+      //             } else {
+
+      //               use_extra = UR(extras_cnt);
+      //               extra_len = extras[use_extra].len;
+
+      //               if (temp_len + extra_len >= MAX_FILE) break;
+
+      //               new_buf = ck_alloc_nozero(temp_len + extra_len);
+
+      //               /* Head */
+      //               memcpy(new_buf, out_buf, insert_at);
+
+      //               /* Inserted part */
+      //               memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
+
+      //             }
+
+      //             /* Tail */
+      //             memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
+      //                   temp_len - insert_at);
+
+      //             ck_free(out_buf);
+      //             out_buf   = new_buf;
+      //             temp_len += extra_len;
+
+      //             // structural_mutation = 1;
+
+      //             break;
+
+      //           }
+      //         /* Values 17 to 20 can be selected only if region-level mutations are enabled */
+
+      //         /* Replace the current region with a random region from a random seed */
+      //         case 3: {
+      //             u32 src_region_len = 0;
+      //             u8* new_buf = choose_source_region(&src_region_len);
+      //             if (new_buf == NULL) break;
+
+      //             //replace the current region
+      //             ck_free(out_buf);
+      //             out_buf = new_buf;
+      //             temp_len = src_region_len;
+      //             // structural_mutation = 1;
+      //             break;
+      //           }
+
+      //         /* Insert a random region from a random seed to the beginning of the current region */
+      //         case 4: {
+      //             u32 src_region_len = 0;
+      //             u8* src_region = choose_source_region(&src_region_len);
+      //             if (src_region == NULL) break;
+
+      //             if (temp_len + src_region_len >= MAX_FILE) {
+      //               ck_free(src_region);
+      //               break;
+      //             }
+
+      //             u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
+
+      //             memcpy(new_buf, src_region, src_region_len);
+
+      //             memcpy(&new_buf[src_region_len], out_buf, temp_len);
+
+      //             ck_free(out_buf);
+      //             ck_free(src_region);
+      //             out_buf = new_buf;
+      //             temp_len += src_region_len;
+      //             // structural_mutation = 1;
+      //             break;
+      //           }
+
+      //         /* Insert a random region from a random seed to the end of the current region */
+      //         case 5: {
+      //             u32 src_region_len = 0;
+      //             u8* src_region = choose_source_region(&src_region_len);
+      //             if (src_region == NULL) break;
+
+      //             if (temp_len + src_region_len >= MAX_FILE) {
+      //               ck_free(src_region);
+      //               break;
+      //             }
+
+      //             u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
+
+      //             memcpy(new_buf, out_buf, temp_len);
+
+      //             memcpy(&new_buf[temp_len], src_region, src_region_len);
+
+      //             ck_free(out_buf);
+      //             ck_free(src_region);
+      //             out_buf = new_buf;
+      //             temp_len += src_region_len;
+      //             // structural_mutation = 1;
+      //             break;
+      //           }
+
+      //         /* Duplicate the current region */
+      //         case 6: {
+      //             if (temp_len * 2 >= MAX_FILE) break;
+
+      //             u8* new_buf = ck_alloc_nozero(temp_len * 2);
+
+      //             memcpy(new_buf, out_buf, temp_len);
+
+      //             memcpy(&new_buf[temp_len], out_buf, temp_len);
+
+      //             ck_free(out_buf);
+      //             out_buf = new_buf;
+      //             temp_len += temp_len;
+      //             // structural_mutation = 1;
+      //             break;
+      //           }
+
+      //         /*******************************************************
+      //          * 新增代码: 结构感知的变异算子 (MODIFIED CODE) *
+      //          *******************************************************/
+
+      //         /* MSG_DELETE: 删除一个完整的消息 */
+      //         case 7: {
+
+      //           /* 只有在至少有两条消息时，删除才有意义 */
+      //           if (temp_len < 2 || M2_region_count < 2) break;
+
+      //           /* 随机选择要删除的消息索引 */
+      //           u32 msg_idx_del = UR(M2_region_count);
+
+      //           /* 获取该消息的边界和长度 */
+      //           u32 msg_start_del = message_boundaries[msg_idx_del];
+      //           u32 msg_len_del   = message_boundaries[msg_idx_del + 1] - msg_start_del;
+
+      //           /* 使用 memmove 将被删除消息之后的所有数据向前移动，覆盖它 */
+      //           memmove(out_buf + msg_start_del,
+      //                   out_buf + msg_start_del + msg_len_del,
+      //                   temp_len - (msg_start_del + msg_len_del));
+
+      //           /* 更新缓冲区的总长度 */
+      //           temp_len -= msg_len_del;
+      //           // structural_mutation = 1;
+      //           break;
+      //         }
+
+      //         /* MSG_DUPLICATE: 复制一个完整的消息 */
+      //         case 8: {
+
+      //           /* 只有在有消息可复制时才执行 */
+      //           if (temp_len < 1 || M2_region_count < 1) break;
+
+      //           /* 随机选择要复制的消息 */
+      //           u32 msg_idx_dup = UR(M2_region_count);
+      //           u32 msg_start_dup = message_boundaries[msg_idx_dup];
+      //           u32 msg_len_dup   = message_boundaries[msg_idx_dup + 1] - msg_start_dup;
+                
+      //           /* 检查复制后是否会超出最大文件大小限制 */
+      //           if (temp_len + msg_len_dup >= MAX_FILE) break;
+                
+      //           /* 随机选择一个插入点（可以在任何两条消息之间，包括开头和结尾）*/
+      //           u32 insert_at_msg_idx = UR(M2_region_count + 1);
+      //           u32 insert_offset     = message_boundaries[insert_at_msg_idx];
+
+      //           /* 创建一个新的、更大的缓冲区 */
+      //           u8* new_buf = ck_alloc_nozero(temp_len + msg_len_dup);
+
+      //           /* 1. 拷贝插入点之前的数据 */
+      //           memcpy(new_buf, out_buf, insert_offset);
+
+      //           /* 2. 拷贝被复制的消息到插入点 */
+      //           memcpy(new_buf + insert_offset, out_buf + msg_start_dup, msg_len_dup);
+                
+      //           /* 3. 拷贝插入点之后的数据 */
+      //           memcpy(new_buf + insert_offset + msg_len_dup,
+      //                 out_buf + insert_offset,
+      //                 temp_len - insert_offset);
+
+      //           /* 释放旧缓冲区，用新缓冲区取而代之 */
+      //           ck_free(out_buf);
+      //           out_buf = new_buf;
+                
+      //           /* 更新缓冲区的总长度 */
+      //           temp_len += msg_len_dup;
+      //           // structural_mutation = 1;
+      //           break;
+      //         }
+      //       /*******************************************************
+      //         *                        结束新增代码                     *
+      //         *******************************************************/
+
+      //         /*******************************************************
+      //          * 新增变异算子: 消息交换 (MSG_SWAP)          *
+      //          *******************************************************/
+      //         case 9: {
+      //           /* 前提条件：必须至少有两条消息才能交换 */
+      //           if (M2_region_count < 2) break;
+
+      //           u32 msg_idx1, msg_idx2;
+      //           u32 start1, len1, start2, len2;
+      //           u8* new_buf;
+      //           u32 intermediate_start, intermediate_len;
+
+      //           /* 1. 随机选择两个 *不同* 的消息索引 */
+      //           msg_idx1 = UR(M2_region_count);
+      //           do {
+      //             msg_idx2 = UR(M2_region_count);
+      //           } while (msg_idx1 == msg_idx2);
+
+      //           /* 2. 确保 idx1 < idx2 以简化逻辑 */
+      //           if (msg_idx1 > msg_idx2) {
+      //             u32 tmp = msg_idx1;
+      //             msg_idx1 = msg_idx2;
+      //             msg_idx2 = tmp;
+      //           }
+
+      //           /* 3. 获取两条消息的边界和它们之间数据的边界 */
+      //           start1 = message_boundaries[msg_idx1];
+      //           len1   = message_boundaries[msg_idx1 + 1] - start1;
+
+      //           start2 = message_boundaries[msg_idx2];
+      //           len2   = message_boundaries[msg_idx2 + 1] - start2;
+                
+      //           intermediate_start = start1 + len1;
+      //           intermediate_len = start2 - intermediate_start;
+
+      //           /* 4. 创建一个新缓冲区来执行交换，这是处理不同长度消息交换最安全的方法 */
+      //           new_buf = ck_alloc_nozero(temp_len);
+
+      //           /* 5. 按新的顺序分段拷贝数据 */
+      //           // Part A: 第一条消息之前的所有数据
+      //           memcpy(new_buf, out_buf, start1);
+                
+      //           // Part B: 将 *第二条* 消息拷贝到第一条的位置
+      //           memcpy(new_buf + start1, out_buf + start2, len2);
+
+      //           // Part C: 拷贝两条消息之间的所有数据
+      //           memcpy(new_buf + start1 + len2, out_buf + intermediate_start, intermediate_len);
+
+      //           // Part D: 将 *第一条* 消息拷贝到第二条的位置
+      //           memcpy(new_buf + start1 + len2 + intermediate_len, out_buf + start1, len1);
+
+      //           // Part E: 第二条消息之后的所有数据
+      //           memcpy(new_buf + start1 + len2 + intermediate_len + len1,
+      //                 out_buf + start2 + len2,
+      //                 temp_len - (start2 + len2));
+                
+      //           /* 6. 替换旧缓冲区 */
+      //           ck_free(out_buf);
+      //           out_buf = new_buf;
+                
+      //           /* 总长度不变 */
+      //           // structural_mutation = 1;
+      //           break;
+      //         }
+
+      //         /*******************************************************
+      //          * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
+      //          *******************************************************/
+      //         case 10: {
+      //           /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
+      //           if (M2_region_count < 1 || temp_len < 2) break;
+                
+      //           u32 msg_to_split_idx, msg_to_insert_idx;
+      //           u32 split_start, split_len, split_offset_in_msg;
+      //           u32 insert_start, insert_len;
+      //           u8* new_buf;
+
+      //           /* 1. 随机选择一条消息进行分裂 */
+      //           msg_to_split_idx = UR(M2_region_count);
+      //           split_start = message_boundaries[msg_to_split_idx];
+      //           split_len   = message_boundaries[msg_to_split_idx + 1] - split_start;
+
+      //           if (split_len < 2) break; // 长度为1的消息无法分裂
+
+      //           /* 2. 随机选择另一条消息作为插入内容 (可以是同一条) */
+      //           msg_to_insert_idx = UR(M2_region_count);
+      //           insert_start = message_boundaries[msg_to_insert_idx];
+      //           insert_len   = message_boundaries[msg_to_insert_idx + 1] - insert_start;
+
+      //           /* 3. 检查变异后是否会超出文件大小限制 */
+      //           if (temp_len + insert_len >= MAX_FILE) break;
+
+      //           /* 4. 确定在消息内部的分裂点 (1 到 len-1) */
+      //           split_offset_in_msg = 1 + UR(split_len - 1);
+
+      //           /* 5. 创建新缓冲区 */
+      //           new_buf = ck_alloc_nozero(temp_len + insert_len);
+
+      //           /* 6. 分段拷贝 */
+      //           // Part A: 拷贝到分裂点(包含)
+      //           u32 split_point_abs = split_start + split_offset_in_msg;
+      //           memcpy(new_buf, out_buf, split_point_abs);
+
+      //           // Part B: 在分裂点插入选定的消息内容
+      //           memcpy(new_buf + split_point_abs, out_buf + insert_start, insert_len);
+
+      //           // Part C: 拷贝原缓冲区剩余的部分
+      //           memcpy(new_buf + split_point_abs + insert_len,
+      //                 out_buf + split_point_abs,
+      //                 temp_len - split_point_abs);
+
+      //           /* 7. 替换旧缓冲区并更新长度 */
+      //           ck_free(out_buf);
+      //           out_buf = new_buf;
+      //           temp_len += insert_len;
+      //           // structural_mutation = 1;
+      //           break;
+      //         }
+      //       }
+      //     }
+      int choice = UR(18 + (region_level_mutation ? 8 : 0));
+
+      switch (choice) {
+
+        case 0:
+
+          /* Flip a single bit somewhere. Spooky! */
+
+          FLIP_BIT(out_buf, UR(temp_len << 3));
+          break;
+
+        case 1:
+
+          /* Set byte to interesting value. */
+
+          out_buf[UR(temp_len)] = interesting_8[UR(sizeof(interesting_8))];
+          break;
+
+        case 2:
+
+          /* Set word to interesting value, randomly choosing endian. */
+
+          if (temp_len < 2) break;
+
+          if (UR(2)) {
+
+            *(u16*)(out_buf + UR(temp_len - 1)) =
+              interesting_16[UR(sizeof(interesting_16) >> 1)];
+
+          } else {
+
+            *(u16*)(out_buf + UR(temp_len - 1)) = SWAP16(
+              interesting_16[UR(sizeof(interesting_16) >> 1)]);
+
+          }
+
+          break;
+
+        case 3:
+
+          /* Set dword to interesting value, randomly choosing endian. */
+
+          if (temp_len < 4) break;
+
+          if (UR(2)) {
+
+            *(u32*)(out_buf + UR(temp_len - 3)) =
+              interesting_32[UR(sizeof(interesting_32) >> 2)];
+
+          } else {
+
+            *(u32*)(out_buf + UR(temp_len - 3)) = SWAP32(
+              interesting_32[UR(sizeof(interesting_32) >> 2)]);
+
+          }
+
+          break;
+
+        case 4:
+
+          /* Randomly subtract from byte. */
+
+          out_buf[UR(temp_len)] -= 1 + UR(ARITH_MAX);
+          break;
+
+        case 5:
+
+          /* Randomly add to byte. */
+
+          out_buf[UR(temp_len)] += 1 + UR(ARITH_MAX);
+          break;
+
+        case 6:
+
+          /* Randomly subtract from word, random endian. */
+
+          if (temp_len < 2) break;
+
+          if (UR(2)) {
+
+            u32 pos = UR(temp_len - 1);
+
+            *(u16*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
+
+          } else {
+
+            u32 pos = UR(temp_len - 1);
+            u16 num = 1 + UR(ARITH_MAX);
+
+            *(u16*)(out_buf + pos) =
+              SWAP16(SWAP16(*(u16*)(out_buf + pos)) - num);
+
+          }
+
+          break;
+
+        case 7:
+
+          /* Randomly add to word, random endian. */
+
+          if (temp_len < 2) break;
+
+          if (UR(2)) {
+
+            u32 pos = UR(temp_len - 1);
+
+            *(u16*)(out_buf + pos) += 1 + UR(ARITH_MAX);
+
+          } else {
+
+            u32 pos = UR(temp_len - 1);
+            u16 num = 1 + UR(ARITH_MAX);
+
+            *(u16*)(out_buf + pos) =
+              SWAP16(SWAP16(*(u16*)(out_buf + pos)) + num);
+
+          }
+
+          break;
+
+        case 8:
+
+          /* Randomly subtract from dword, random endian. */
+
+          if (temp_len < 4) break;
+
+          if (UR(2)) {
+
+            u32 pos = UR(temp_len - 3);
+
+            *(u32*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
+
+          } else {
+
+            u32 pos = UR(temp_len - 3);
+            u32 num = 1 + UR(ARITH_MAX);
+
+            *(u32*)(out_buf + pos) =
+              SWAP32(SWAP32(*(u32*)(out_buf + pos)) - num);
+
+          }
+
+          break;
+
+        case 9:
+
+          /* Randomly add to dword, random endian. */
+
+          if (temp_len < 4) break;
+
+          if (UR(2)) {
+
+            u32 pos = UR(temp_len - 3);
+
+            *(u32*)(out_buf + pos) += 1 + UR(ARITH_MAX);
+
+          } else {
+
+            u32 pos = UR(temp_len - 3);
+            u32 num = 1 + UR(ARITH_MAX);
+
+            *(u32*)(out_buf + pos) =
+              SWAP32(SWAP32(*(u32*)(out_buf + pos)) + num);
+
+          }
+
+          break;
+
+        case 10:
+
+          /* Just set a random byte to a random value. Because,
+             why not. We use XOR with 1-255 to eliminate the
+             possibility of a no-op. */
+
+          out_buf[UR(temp_len)] ^= 1 + UR(255);
+          break;
+
+        case 11 ... 12: {
+
+            /* Delete bytes. We're making this a bit more likely
+               than insertion (the next option) in hopes of keeping
+               files reasonably small. */
+
+            u32 del_from, del_len;
+
+            if (temp_len < 2) break;
+
+            /* Don't delete too much. */
+
+            del_len = choose_block_len(temp_len - 1);
+
+            del_from = UR(temp_len - del_len + 1);
+
+            memmove(out_buf + del_from, out_buf + del_from + del_len,
+                    temp_len - del_from - del_len);
+
+            temp_len -= del_len;
+
+            break;
+
+          }
+
+        case 13:
+
+          if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
+
+            /* Clone bytes (75%) or insert a block of constant bytes (25%). */
+
+            u8  actually_clone = UR(4);
+            u32 clone_from, clone_to, clone_len;
+            u8* new_buf;
+
+            if (actually_clone) {
+
+              clone_len  = choose_block_len(temp_len);
+              clone_from = UR(temp_len - clone_len + 1);
+
+            } else {
+
+              clone_len = choose_block_len(HAVOC_BLK_XL);
+              clone_from = 0;
+
+            }
+
+            clone_to   = UR(temp_len);
+
+            new_buf = ck_alloc_nozero(temp_len + clone_len);
+
+            /* Head */
+
+            memcpy(new_buf, out_buf, clone_to);
+
+            /* Inserted part */
+
+            if (actually_clone)
+              memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
+            else
+              memset(new_buf + clone_to,
+                     UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
+
+            /* Tail */
+            memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
+                   temp_len - clone_to);
+
+            ck_free(out_buf);
+            out_buf = new_buf;
+            temp_len += clone_len;
+
+          }
+
+          break;
+
+        case 14: {
+
+            /* Overwrite bytes with a randomly selected chunk (75%) or fixed
+               bytes (25%). */
+
+            u32 copy_from, copy_to, copy_len;
+
+            if (temp_len < 2) break;
+
+            copy_len  = choose_block_len(temp_len - 1);
+
+            copy_from = UR(temp_len - copy_len + 1);
+            copy_to   = UR(temp_len - copy_len + 1);
+
+            if (UR(4)) {
+
+              if (copy_from != copy_to)
+                memmove(out_buf + copy_to, out_buf + copy_from, copy_len);
+
+            } else memset(out_buf + copy_to,
+                          UR(2) ? UR(256) : out_buf[UR(temp_len)], copy_len);
+
+            break;
+
+          }
+
+        /* Values 15 and 16 can be selected only if there are any extras
+           present in the dictionaries. */
+
+        case 15: {
+            if (extras_cnt + a_extras_cnt == 0) break;
+
+            /* Overwrite bytes with an extra. */
+
+            if (!extras_cnt || (a_extras_cnt && UR(2))) {
+
+              /* No user-specified extras or odds in our favor. Let's use an
+                 auto-detected one. */
+
+              u32 use_extra = UR(a_extras_cnt);
+              u32 extra_len = a_extras[use_extra].len;
+              u32 insert_at;
+
+              if (extra_len > temp_len) break;
+
+              insert_at = UR(temp_len - extra_len + 1);
+              memcpy(out_buf + insert_at, a_extras[use_extra].data, extra_len);
+
+            } else {
+
+              /* No auto extras or odds in our favor. Use the dictionary. */
+
+              u32 use_extra = UR(extras_cnt);
+              u32 extra_len = extras[use_extra].len;
+              u32 insert_at;
+
+              if (extra_len > temp_len) break;
+
+              insert_at = UR(temp_len - extra_len + 1);
+              memcpy(out_buf + insert_at, extras[use_extra].data, extra_len);
+
+            }
+
+            break;
+
+          }
+
+        case 16: {
+            if (extras_cnt + a_extras_cnt == 0) break;
+
+            u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
+            u8* new_buf;
+
+            /* Insert an extra. Do the same dice-rolling stuff as for the
+               previous case. */
+
+            if (!extras_cnt || (a_extras_cnt && UR(2))) {
+
+              use_extra = UR(a_extras_cnt);
+              extra_len = a_extras[use_extra].len;
+
+              if (temp_len + extra_len >= MAX_FILE) break;
+
+              new_buf = ck_alloc_nozero(temp_len + extra_len);
+
+              /* Head */
+              memcpy(new_buf, out_buf, insert_at);
+
+              /* Inserted part */
+              memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
+
+            } else {
+
+              use_extra = UR(extras_cnt);
+              extra_len = extras[use_extra].len;
+
+              if (temp_len + extra_len >= MAX_FILE) break;
+
+              new_buf = ck_alloc_nozero(temp_len + extra_len);
+
+              /* Head */
+              memcpy(new_buf, out_buf, insert_at);
+
+              /* Inserted part */
+              memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
+
+            }
+
+            /* Tail */
+            memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
+                   temp_len - insert_at);
+
+            ck_free(out_buf);
+            out_buf   = new_buf;
+            temp_len += extra_len;
+
+            break;
+
+          }
+
+        /*******************************************************
+         * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
+         *******************************************************/
+        case 17: {
+          /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
+          if (M2_region_count < 2) break;
+
+          u32 target_idx, src_idx;
+          u32 target_start, target_len;
+          u32 src_start, src_len;
+
+          /* 1. 随机选择源消息和目标消息 */
+          target_idx = UR(M2_region_count);
+          do {
+            src_idx = UR(M2_region_count);
+          } while (target_idx == src_idx);
+          
+          target_start = message_boundaries[target_idx];
+          target_len   = message_boundaries[target_idx + 1] - target_start;
+
+          src_start = message_boundaries[src_idx];
+          src_len   = message_boundaries[src_idx + 1] - src_start;
+
+          /* 2. 将源消息的内容覆盖到目标消息的位置 */
+          /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
+          u32 overwrite_len = MIN(target_len, src_len);
+          if (overwrite_len > 0) {
+            memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
+          }
+
+          /* 缓冲区总长度不变 */
+          break;
+        }
+        /* Values 18 to 25 can be selected only if region-level mutations are enabled */
+
+        /* Replace the current region with a random region from a random seed */
+        case 18: {
+            u32 src_region_len = 0;
+            u8* new_buf = choose_source_region(&src_region_len);
+            if (new_buf == NULL) break;
+
+            //replace the current region
+            ck_free(out_buf);
+            out_buf = new_buf;
+            temp_len = src_region_len;
+            break;
+          }
+
+        /* Insert a random region from a random seed to the beginning of the current region */
+        case 19: {
+            u32 src_region_len = 0;
+            u8* src_region = choose_source_region(&src_region_len);
+            if (src_region == NULL) break;
+
+            if (temp_len + src_region_len >= MAX_FILE) {
+              ck_free(src_region);
               break;
             }
+
+            u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
+
+            memcpy(new_buf, src_region, src_region_len);
+
+            memcpy(&new_buf[src_region_len], out_buf, temp_len);
+
+            ck_free(out_buf);
+            ck_free(src_region);
+            out_buf = new_buf;
+            temp_len += src_region_len;
+            break;
           }
-        }
-        
-        // --- 策略2: 低概率执行慢速但强大的结构化变异 ---
-        } else { // 30% 的概率
 
-            // **只执行一次结构化变异**，避免性能雪崩
-            // 这里的 rescan 是为了确保，以防万一之前的操作弄乱了边界（虽然我们已经分离了）
-            rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
-
-            switch (UR(11)) { // 选择所有会改变结构的 case
-                case 0: {
-
-                  /* Delete bytes. We're making this a bit more likely
-                    than insertion (the next option) in hopes of keeping
-                    files reasonably small. */
-
-                  u32 del_from, del_len;
-
-                  if (temp_len < 2) break;
-
-                  /* Don't delete too much. */
-
-                  del_len = choose_block_len(temp_len - 1);
-
-                  del_from = UR(temp_len - del_len + 1);
-
-                  memmove(out_buf + del_from, out_buf + del_from + del_len,
-                          temp_len - del_from - del_len);
-
-                  temp_len -= del_len;
-
-                  // structural_mutation = 1;
-
-                  break;
-
-                }
-
-              case 1:
-
-                if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
-
-                  /* Clone bytes (75%) or insert a block of constant bytes (25%). */
-
-                  u8  actually_clone = UR(4);
-                  u32 clone_from, clone_to, clone_len;
-                  u8* new_buf;
-
-                  if (actually_clone) {
-
-                    clone_len  = choose_block_len(temp_len);
-                    clone_from = UR(temp_len - clone_len + 1);
-
-                  } else {
-
-                    clone_len = choose_block_len(HAVOC_BLK_XL);
-                    clone_from = 0;
-
-                  }
-
-                  clone_to = UR(temp_len);
-
-                  new_buf = ck_alloc_nozero(temp_len + clone_len);
-
-                  /* Head */
-
-                  memcpy(new_buf, out_buf, clone_to);
-
-                  /* Inserted part */
-
-                  if (actually_clone)
-                    memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
-                  else
-                    memset(new_buf + clone_to,
-                          UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
-
-                  /* Tail */
-                  memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
-                        temp_len - clone_to);
-
-                  ck_free(out_buf);
-                  out_buf = new_buf;
-                  temp_len += clone_len;
-
-                  // structural_mutation = 1;
-
-                }
-
-                break;
-                
-                case 2: {
-                  if (extras_cnt + a_extras_cnt == 0) break;
-
-                  u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
-                  u8* new_buf;
-
-                  /* Insert an extra. Do the same dice-rolling stuff as for the
-                    previous case. */
-
-                  if (!extras_cnt || (a_extras_cnt && UR(2))) {
-
-                    use_extra = UR(a_extras_cnt);
-                    extra_len = a_extras[use_extra].len;
-
-                    if (temp_len + extra_len >= MAX_FILE) break;
-
-                    new_buf = ck_alloc_nozero(temp_len + extra_len);
-
-                    /* Head */
-                    memcpy(new_buf, out_buf, insert_at);
-
-                    /* Inserted part */
-                    memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
-
-                  } else {
-
-                    use_extra = UR(extras_cnt);
-                    extra_len = extras[use_extra].len;
-
-                    if (temp_len + extra_len >= MAX_FILE) break;
-
-                    new_buf = ck_alloc_nozero(temp_len + extra_len);
-
-                    /* Head */
-                    memcpy(new_buf, out_buf, insert_at);
-
-                    /* Inserted part */
-                    memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
-
-                  }
-
-                  /* Tail */
-                  memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
-                        temp_len - insert_at);
-
-                  ck_free(out_buf);
-                  out_buf   = new_buf;
-                  temp_len += extra_len;
-
-                  // structural_mutation = 1;
-
-                  break;
-
-                }
-              /* Values 17 to 20 can be selected only if region-level mutations are enabled */
-
-              /* Replace the current region with a random region from a random seed */
-              case 3: {
-                  u32 src_region_len = 0;
-                  u8* new_buf = choose_source_region(&src_region_len);
-                  if (new_buf == NULL) break;
-
-                  //replace the current region
-                  ck_free(out_buf);
-                  out_buf = new_buf;
-                  temp_len = src_region_len;
-                  // structural_mutation = 1;
-                  break;
-                }
-
-              /* Insert a random region from a random seed to the beginning of the current region */
-              case 4: {
-                  u32 src_region_len = 0;
-                  u8* src_region = choose_source_region(&src_region_len);
-                  if (src_region == NULL) break;
-
-                  if (temp_len + src_region_len >= MAX_FILE) {
-                    ck_free(src_region);
-                    break;
-                  }
-
-                  u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
-
-                  memcpy(new_buf, src_region, src_region_len);
-
-                  memcpy(&new_buf[src_region_len], out_buf, temp_len);
-
-                  ck_free(out_buf);
-                  ck_free(src_region);
-                  out_buf = new_buf;
-                  temp_len += src_region_len;
-                  // structural_mutation = 1;
-                  break;
-                }
-
-              /* Insert a random region from a random seed to the end of the current region */
-              case 5: {
-                  u32 src_region_len = 0;
-                  u8* src_region = choose_source_region(&src_region_len);
-                  if (src_region == NULL) break;
-
-                  if (temp_len + src_region_len >= MAX_FILE) {
-                    ck_free(src_region);
-                    break;
-                  }
-
-                  u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
-
-                  memcpy(new_buf, out_buf, temp_len);
-
-                  memcpy(&new_buf[temp_len], src_region, src_region_len);
-
-                  ck_free(out_buf);
-                  ck_free(src_region);
-                  out_buf = new_buf;
-                  temp_len += src_region_len;
-                  // structural_mutation = 1;
-                  break;
-                }
-
-              /* Duplicate the current region */
-              case 6: {
-                  if (temp_len * 2 >= MAX_FILE) break;
-
-                  u8* new_buf = ck_alloc_nozero(temp_len * 2);
-
-                  memcpy(new_buf, out_buf, temp_len);
-
-                  memcpy(&new_buf[temp_len], out_buf, temp_len);
-
-                  ck_free(out_buf);
-                  out_buf = new_buf;
-                  temp_len += temp_len;
-                  // structural_mutation = 1;
-                  break;
-                }
-
-              /*******************************************************
-               * 新增代码: 结构感知的变异算子 (MODIFIED CODE) *
-               *******************************************************/
-
-              /* MSG_DELETE: 删除一个完整的消息 */
-              case 7: {
-
-                /* 只有在至少有两条消息时，删除才有意义 */
-                if (temp_len < 2 || M2_region_count < 2) break;
-
-                /* 随机选择要删除的消息索引 */
-                u32 msg_idx_del = UR(M2_region_count);
-
-                /* 获取该消息的边界和长度 */
-                u32 msg_start_del = message_boundaries[msg_idx_del];
-                u32 msg_len_del   = message_boundaries[msg_idx_del + 1] - msg_start_del;
-
-                /* 使用 memmove 将被删除消息之后的所有数据向前移动，覆盖它 */
-                memmove(out_buf + msg_start_del,
-                        out_buf + msg_start_del + msg_len_del,
-                        temp_len - (msg_start_del + msg_len_del));
-
-                /* 更新缓冲区的总长度 */
-                temp_len -= msg_len_del;
-                // structural_mutation = 1;
-                break;
-              }
-
-              /* MSG_DUPLICATE: 复制一个完整的消息 */
-              case 8: {
-
-                /* 只有在有消息可复制时才执行 */
-                if (temp_len < 1 || M2_region_count < 1) break;
-
-                /* 随机选择要复制的消息 */
-                u32 msg_idx_dup = UR(M2_region_count);
-                u32 msg_start_dup = message_boundaries[msg_idx_dup];
-                u32 msg_len_dup   = message_boundaries[msg_idx_dup + 1] - msg_start_dup;
-                
-                /* 检查复制后是否会超出最大文件大小限制 */
-                if (temp_len + msg_len_dup >= MAX_FILE) break;
-                
-                /* 随机选择一个插入点（可以在任何两条消息之间，包括开头和结尾）*/
-                u32 insert_at_msg_idx = UR(M2_region_count + 1);
-                u32 insert_offset     = message_boundaries[insert_at_msg_idx];
-
-                /* 创建一个新的、更大的缓冲区 */
-                u8* new_buf = ck_alloc_nozero(temp_len + msg_len_dup);
-
-                /* 1. 拷贝插入点之前的数据 */
-                memcpy(new_buf, out_buf, insert_offset);
-
-                /* 2. 拷贝被复制的消息到插入点 */
-                memcpy(new_buf + insert_offset, out_buf + msg_start_dup, msg_len_dup);
-                
-                /* 3. 拷贝插入点之后的数据 */
-                memcpy(new_buf + insert_offset + msg_len_dup,
-                      out_buf + insert_offset,
-                      temp_len - insert_offset);
-
-                /* 释放旧缓冲区，用新缓冲区取而代之 */
-                ck_free(out_buf);
-                out_buf = new_buf;
-                
-                /* 更新缓冲区的总长度 */
-                temp_len += msg_len_dup;
-                // structural_mutation = 1;
-                break;
-              }
-            /*******************************************************
-              *                        结束新增代码                     *
-              *******************************************************/
-
-              /*******************************************************
-               * 新增变异算子: 消息交换 (MSG_SWAP)          *
-               *******************************************************/
-              case 9: {
-                /* 前提条件：必须至少有两条消息才能交换 */
-                if (M2_region_count < 2) break;
-
-                u32 msg_idx1, msg_idx2;
-                u32 start1, len1, start2, len2;
-                u8* new_buf;
-                u32 intermediate_start, intermediate_len;
-
-                /* 1. 随机选择两个 *不同* 的消息索引 */
-                msg_idx1 = UR(M2_region_count);
-                do {
-                  msg_idx2 = UR(M2_region_count);
-                } while (msg_idx1 == msg_idx2);
-
-                /* 2. 确保 idx1 < idx2 以简化逻辑 */
-                if (msg_idx1 > msg_idx2) {
-                  u32 tmp = msg_idx1;
-                  msg_idx1 = msg_idx2;
-                  msg_idx2 = tmp;
-                }
-
-                /* 3. 获取两条消息的边界和它们之间数据的边界 */
-                start1 = message_boundaries[msg_idx1];
-                len1   = message_boundaries[msg_idx1 + 1] - start1;
-
-                start2 = message_boundaries[msg_idx2];
-                len2   = message_boundaries[msg_idx2 + 1] - start2;
-                
-                intermediate_start = start1 + len1;
-                intermediate_len = start2 - intermediate_start;
-
-                /* 4. 创建一个新缓冲区来执行交换，这是处理不同长度消息交换最安全的方法 */
-                new_buf = ck_alloc_nozero(temp_len);
-
-                /* 5. 按新的顺序分段拷贝数据 */
-                // Part A: 第一条消息之前的所有数据
-                memcpy(new_buf, out_buf, start1);
-                
-                // Part B: 将 *第二条* 消息拷贝到第一条的位置
-                memcpy(new_buf + start1, out_buf + start2, len2);
-
-                // Part C: 拷贝两条消息之间的所有数据
-                memcpy(new_buf + start1 + len2, out_buf + intermediate_start, intermediate_len);
-
-                // Part D: 将 *第一条* 消息拷贝到第二条的位置
-                memcpy(new_buf + start1 + len2 + intermediate_len, out_buf + start1, len1);
-
-                // Part E: 第二条消息之后的所有数据
-                memcpy(new_buf + start1 + len2 + intermediate_len + len1,
-                      out_buf + start2 + len2,
-                      temp_len - (start2 + len2));
-                
-                /* 6. 替换旧缓冲区 */
-                ck_free(out_buf);
-                out_buf = new_buf;
-                
-                /* 总长度不变 */
-                // structural_mutation = 1;
-                break;
-              }
-
-              /*******************************************************
-               * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
-               *******************************************************/
-              case 10: {
-                /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
-                if (M2_region_count < 1 || temp_len < 2) break;
-                
-                u32 msg_to_split_idx, msg_to_insert_idx;
-                u32 split_start, split_len, split_offset_in_msg;
-                u32 insert_start, insert_len;
-                u8* new_buf;
-
-                /* 1. 随机选择一条消息进行分裂 */
-                msg_to_split_idx = UR(M2_region_count);
-                split_start = message_boundaries[msg_to_split_idx];
-                split_len   = message_boundaries[msg_to_split_idx + 1] - split_start;
-
-                if (split_len < 2) break; // 长度为1的消息无法分裂
-
-                /* 2. 随机选择另一条消息作为插入内容 (可以是同一条) */
-                msg_to_insert_idx = UR(M2_region_count);
-                insert_start = message_boundaries[msg_to_insert_idx];
-                insert_len   = message_boundaries[msg_to_insert_idx + 1] - insert_start;
-
-                /* 3. 检查变异后是否会超出文件大小限制 */
-                if (temp_len + insert_len >= MAX_FILE) break;
-
-                /* 4. 确定在消息内部的分裂点 (1 到 len-1) */
-                split_offset_in_msg = 1 + UR(split_len - 1);
-
-                /* 5. 创建新缓冲区 */
-                new_buf = ck_alloc_nozero(temp_len + insert_len);
-
-                /* 6. 分段拷贝 */
-                // Part A: 拷贝到分裂点(包含)
-                u32 split_point_abs = split_start + split_offset_in_msg;
-                memcpy(new_buf, out_buf, split_point_abs);
-
-                // Part B: 在分裂点插入选定的消息内容
-                memcpy(new_buf + split_point_abs, out_buf + insert_start, insert_len);
-
-                // Part C: 拷贝原缓冲区剩余的部分
-                memcpy(new_buf + split_point_abs + insert_len,
-                      out_buf + split_point_abs,
-                      temp_len - split_point_abs);
-
-                /* 7. 替换旧缓冲区并更新长度 */
-                ck_free(out_buf);
-                out_buf = new_buf;
-                temp_len += insert_len;
-                // structural_mutation = 1;
-                break;
-              }
+        /* Insert a random region from a random seed to the end of the current region */
+        case 20: {
+            u32 src_region_len = 0;
+            u8* src_region = choose_source_region(&src_region_len);
+            if (src_region == NULL) break;
+
+            if (temp_len + src_region_len >= MAX_FILE) {
+              ck_free(src_region);
+              break;
             }
+
+            u8* new_buf = ck_alloc_nozero(temp_len + src_region_len);
+
+            memcpy(new_buf, out_buf, temp_len);
+
+            memcpy(&new_buf[temp_len], src_region, src_region_len);
+
+            ck_free(out_buf);
+            ck_free(src_region);
+            out_buf = new_buf;
+            temp_len += src_region_len;
+            break;
           }
+
+        /* Duplicate the current region */
+        case 21: {
+            if (temp_len * 2 >= MAX_FILE) break;
+
+            u8* new_buf = ck_alloc_nozero(temp_len * 2);
+
+            memcpy(new_buf, out_buf, temp_len);
+
+            memcpy(&new_buf[temp_len], out_buf, temp_len);
+
+            ck_free(out_buf);
+            out_buf = new_buf;
+            temp_len += temp_len;
+            break;
+          }
+
+
+        /*******************************************************
+         * 新增代码: 结构感知的变异算子 (MODIFIED CODE) *
+         *******************************************************/
+
+        /* MSG_DELETE: 删除一个完整的消息 */
+        case 22: {
+
+          /* 只有在至少有两条消息时，删除才有意义 */
+          if (temp_len < 2 || M2_region_count < 2) break;
+
+          /* 随机选择要删除的消息索引 */
+          u32 msg_idx_del = UR(M2_region_count);
+
+          /* 获取该消息的边界和长度 */
+          u32 msg_start_del = message_boundaries[msg_idx_del];
+          u32 msg_len_del   = message_boundaries[msg_idx_del + 1] - msg_start_del;
+
+          /* 使用 memmove 将被删除消息之后的所有数据向前移动，覆盖它 */
+          memmove(out_buf + msg_start_del,
+                  out_buf + msg_start_del + msg_len_del,
+                  temp_len - (msg_start_del + msg_len_del));
+
+          /* 更新缓冲区的总长度 */
+          temp_len -= msg_len_del;
+          // structural_mutation = 1;
+          break;
+        }
+
+        /* MSG_DUPLICATE: 复制一个完整的消息 */
+        case 23: {
+
+          /* 只有在有消息可复制时才执行 */
+          if (temp_len < 1 || M2_region_count < 1) break;
+
+          /* 随机选择要复制的消息 */
+          u32 msg_idx_dup = UR(M2_region_count);
+          u32 msg_start_dup = message_boundaries[msg_idx_dup];
+          u32 msg_len_dup   = message_boundaries[msg_idx_dup + 1] - msg_start_dup;
+          
+          /* 检查复制后是否会超出最大文件大小限制 */
+          if (temp_len + msg_len_dup >= MAX_FILE) break;
+          
+          /* 随机选择一个插入点（可以在任何两条消息之间，包括开头和结尾）*/
+          u32 insert_at_msg_idx = UR(M2_region_count + 1);
+          u32 insert_offset     = message_boundaries[insert_at_msg_idx];
+
+          /* 创建一个新的、更大的缓冲区 */
+          u8* new_buf = ck_alloc_nozero(temp_len + msg_len_dup);
+
+          /* 1. 拷贝插入点之前的数据 */
+          memcpy(new_buf, out_buf, insert_offset);
+
+          /* 2. 拷贝被复制的消息到插入点 */
+          memcpy(new_buf + insert_offset, out_buf + msg_start_dup, msg_len_dup);
+          
+          /* 3. 拷贝插入点之后的数据 */
+          memcpy(new_buf + insert_offset + msg_len_dup,
+                out_buf + insert_offset,
+                temp_len - insert_offset);
+
+          /* 释放旧缓冲区，用新缓冲区取而代之 */
+          ck_free(out_buf);
+          out_buf = new_buf;
+          
+          /* 更新缓冲区的总长度 */
+          temp_len += msg_len_dup;
+          // structural_mutation = 1;
+          break;
+        }
+
+        /*******************************************************
+         * 新增变异算子: 消息交换 (MSG_SWAP)          *
+         *******************************************************/
+        case 24: {
+          /* 前提条件：必须至少有两条消息才能交换 */
+          if (M2_region_count < 2) break;
+
+          u32 msg_idx1, msg_idx2;
+          u32 start1, len1, start2, len2;
+          u8* new_buf;
+          u32 intermediate_start, intermediate_len;
+
+          /* 1. 随机选择两个 *不同* 的消息索引 */
+          msg_idx1 = UR(M2_region_count);
+          do {
+            msg_idx2 = UR(M2_region_count);
+          } while (msg_idx1 == msg_idx2);
+
+          /* 2. 确保 idx1 < idx2 以简化逻辑 */
+          if (msg_idx1 > msg_idx2) {
+            u32 tmp = msg_idx1;
+            msg_idx1 = msg_idx2;
+            msg_idx2 = tmp;
+          }
+
+          /* 3. 获取两条消息的边界和它们之间数据的边界 */
+          start1 = message_boundaries[msg_idx1];
+          len1   = message_boundaries[msg_idx1 + 1] - start1;
+
+          start2 = message_boundaries[msg_idx2];
+          len2   = message_boundaries[msg_idx2 + 1] - start2;
+          
+          intermediate_start = start1 + len1;
+          intermediate_len = start2 - intermediate_start;
+
+          /* 4. 创建一个新缓冲区来执行交换，这是处理不同长度消息交换最安全的方法 */
+          new_buf = ck_alloc_nozero(temp_len);
+
+          /* 5. 按新的顺序分段拷贝数据 */
+          // Part A: 第一条消息之前的所有数据
+          memcpy(new_buf, out_buf, start1);
+          
+          // Part B: 将 *第二条* 消息拷贝到第一条的位置
+          memcpy(new_buf + start1, out_buf + start2, len2);
+
+          // Part C: 拷贝两条消息之间的所有数据
+          memcpy(new_buf + start1 + len2, out_buf + intermediate_start, intermediate_len);
+
+          // Part D: 将 *第一条* 消息拷贝到第二条的位置
+          memcpy(new_buf + start1 + len2 + intermediate_len, out_buf + start1, len1);
+
+          // Part E: 第二条消息之后的所有数据
+          memcpy(new_buf + start1 + len2 + intermediate_len + len1,
+                out_buf + start2 + len2,
+                temp_len - (start2 + len2));
+          
+          /* 6. 替换旧缓冲区 */
+          ck_free(out_buf);
+          out_buf = new_buf;
+          
+          /* 总长度不变 */
+          // structural_mutation = 1;
+          break;
+        }
+
+        /*******************************************************
+         * 新增变异算子: 消息分裂与插入 (MSG_SPLICE_OP)  *
+         *******************************************************/
+        case 25: {
+          /* 前提条件: 至少有一条消息，并且长度大于1才能分裂 */
+          if (M2_region_count < 1 || temp_len < 2) break;
+          
+          u32 msg_to_split_idx, msg_to_insert_idx;
+          u32 split_start, split_len, split_offset_in_msg;
+          u32 insert_start, insert_len;
+          u8* new_buf;
+
+          /* 1. 随机选择一条消息进行分裂 */
+          msg_to_split_idx = UR(M2_region_count);
+          split_start = message_boundaries[msg_to_split_idx];
+          split_len   = message_boundaries[msg_to_split_idx + 1] - split_start;
+
+          if (split_len < 2) break; // 长度为1的消息无法分裂
+
+          /* 2. 随机选择另一条消息作为插入内容 (可以是同一条) */
+          msg_to_insert_idx = UR(M2_region_count);
+          insert_start = message_boundaries[msg_to_insert_idx];
+          insert_len   = message_boundaries[msg_to_insert_idx + 1] - insert_start;
+
+          /* 3. 检查变异后是否会超出文件大小限制 */
+          if (temp_len + insert_len >= MAX_FILE) break;
+
+          /* 4. 确定在消息内部的分裂点 (1 到 len-1) */
+          split_offset_in_msg = 1 + UR(split_len - 1);
+
+          /* 5. 创建新缓冲区 */
+          new_buf = ck_alloc_nozero(temp_len + insert_len);
+
+          /* 6. 分段拷贝 */
+          // Part A: 拷贝到分裂点(包含)
+          u32 split_point_abs = split_start + split_offset_in_msg;
+          memcpy(new_buf, out_buf, split_point_abs);
+
+          // Part B: 在分裂点插入选定的消息内容
+          memcpy(new_buf + split_point_abs, out_buf + insert_start, insert_len);
+
+          // Part C: 拷贝原缓冲区剩余的部分
+          memcpy(new_buf + split_point_abs + insert_len,
+                out_buf + split_point_abs,
+                temp_len - split_point_abs);
+
+          /* 7. 替换旧缓冲区并更新长度 */
+          ck_free(out_buf);
+          out_buf = new_buf;
+          temp_len += insert_len;
+          // structural_mutation = 1;
+          break;
+        }
+
+      }
       // *** THE FIX ***
       // If a structural mutation occurred, rescan and update our knowledge.
-      // if (structural_mutation) {
+      if (choice > 18) {
         rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
-      // }
+      }
 
     }
 
