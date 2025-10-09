@@ -8033,6 +8033,10 @@ havoc_stage:
       //     }
       int choice = UR(18 + (region_level_mutation ? 8 : 0));
 
+      if (choice > 17) {
+        rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
+      }
+
       switch (choice) {
 
         case 0:
@@ -8708,7 +8712,7 @@ havoc_stage:
       }
       // *** THE FIX ***
       // If a structural mutation occurred, rescan and update our knowledge.
-      if (choice > 18) {
+      if (choice > 17) {
         rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
       }
 
