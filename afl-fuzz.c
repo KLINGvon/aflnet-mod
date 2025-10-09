@@ -8031,9 +8031,9 @@ havoc_stage:
       //         }
       //       }
       //     }
-      int choice = UR(18 + (region_level_mutation ? 8 : 0));
+      int choice = UR(14 + (region_level_mutation ? 12 : 0));
 
-      if (choice > 17) {
+      if (choice > 13) {
         rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
       }
 
@@ -8212,7 +8212,109 @@ havoc_stage:
           out_buf[UR(temp_len)] ^= 1 + UR(255);
           break;
 
-        case 11 ... 12: {
+        case 11: {
+
+            /* Overwrite bytes with a randomly selected chunk (75%) or fixed
+               bytes (25%). */
+
+            u32 copy_from, copy_to, copy_len;
+
+            if (temp_len < 2) break;
+
+            copy_len  = choose_block_len(temp_len - 1);
+
+            copy_from = UR(temp_len - copy_len + 1);
+            copy_to   = UR(temp_len - copy_len + 1);
+
+            if (UR(4)) {
+
+              if (copy_from != copy_to)
+                memmove(out_buf + copy_to, out_buf + copy_from, copy_len);
+
+            } else memset(out_buf + copy_to,
+                          UR(2) ? UR(256) : out_buf[UR(temp_len)], copy_len);
+
+            break;
+
+          }
+
+        /* Values 15 and 16 can be selected only if there are any extras
+           present in the dictionaries. */
+
+        case 12: {
+            if (extras_cnt + a_extras_cnt == 0) break;
+
+            /* Overwrite bytes with an extra. */
+
+            if (!extras_cnt || (a_extras_cnt && UR(2))) {
+
+              /* No user-specified extras or odds in our favor. Let's use an
+                 auto-detected one. */
+
+              u32 use_extra = UR(a_extras_cnt);
+              u32 extra_len = a_extras[use_extra].len;
+              u32 insert_at;
+
+              if (extra_len > temp_len) break;
+
+              insert_at = UR(temp_len - extra_len + 1);
+              memcpy(out_buf + insert_at, a_extras[use_extra].data, extra_len);
+
+            } else {
+
+              /* No auto extras or odds in our favor. Use the dictionary. */
+
+              u32 use_extra = UR(extras_cnt);
+              u32 extra_len = extras[use_extra].len;
+              u32 insert_at;
+
+              if (extra_len > temp_len) break;
+
+              insert_at = UR(temp_len - extra_len + 1);
+              memcpy(out_buf + insert_at, extras[use_extra].data, extra_len);
+
+            }
+
+            break;
+
+          }
+     
+        /*******************************************************
+         * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
+         *******************************************************/
+        case 13: {
+          /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
+          if (M2_region_count < 2) break;
+
+          u32 target_idx, src_idx;
+          u32 target_start, target_len;
+          u32 src_start, src_len;
+
+          /* 1. 随机选择源消息和目标消息 */
+          target_idx = UR(M2_region_count);
+          do {
+            src_idx = UR(M2_region_count);
+          } while (target_idx == src_idx);
+          
+          target_start = message_boundaries[target_idx];
+          target_len   = message_boundaries[target_idx + 1] - target_start;
+
+          src_start = message_boundaries[src_idx];
+          src_len   = message_boundaries[src_idx + 1] - src_start;
+
+          /* 2. 将源消息的内容覆盖到目标消息的位置 */
+          /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
+          u32 overwrite_len = MIN(target_len, src_len);
+          if (overwrite_len > 0) {
+            memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
+          }
+
+          /* 缓冲区总长度不变 */
+          break;
+        }
+        /* Values 14 to 25 can be selected only if region-level mutations are enabled */
+
+        case 14 ... 15: {
 
             /* Delete bytes. We're making this a bit more likely
                than insertion (the next option) in hopes of keeping
@@ -8237,7 +8339,7 @@ havoc_stage:
 
           }
 
-        case 13:
+        case 16:
 
           if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
 
@@ -8286,75 +8388,8 @@ havoc_stage:
           }
 
           break;
-
-        case 14: {
-
-            /* Overwrite bytes with a randomly selected chunk (75%) or fixed
-               bytes (25%). */
-
-            u32 copy_from, copy_to, copy_len;
-
-            if (temp_len < 2) break;
-
-            copy_len  = choose_block_len(temp_len - 1);
-
-            copy_from = UR(temp_len - copy_len + 1);
-            copy_to   = UR(temp_len - copy_len + 1);
-
-            if (UR(4)) {
-
-              if (copy_from != copy_to)
-                memmove(out_buf + copy_to, out_buf + copy_from, copy_len);
-
-            } else memset(out_buf + copy_to,
-                          UR(2) ? UR(256) : out_buf[UR(temp_len)], copy_len);
-
-            break;
-
-          }
-
-        /* Values 15 and 16 can be selected only if there are any extras
-           present in the dictionaries. */
-
-        case 15: {
-            if (extras_cnt + a_extras_cnt == 0) break;
-
-            /* Overwrite bytes with an extra. */
-
-            if (!extras_cnt || (a_extras_cnt && UR(2))) {
-
-              /* No user-specified extras or odds in our favor. Let's use an
-                 auto-detected one. */
-
-              u32 use_extra = UR(a_extras_cnt);
-              u32 extra_len = a_extras[use_extra].len;
-              u32 insert_at;
-
-              if (extra_len > temp_len) break;
-
-              insert_at = UR(temp_len - extra_len + 1);
-              memcpy(out_buf + insert_at, a_extras[use_extra].data, extra_len);
-
-            } else {
-
-              /* No auto extras or odds in our favor. Use the dictionary. */
-
-              u32 use_extra = UR(extras_cnt);
-              u32 extra_len = extras[use_extra].len;
-              u32 insert_at;
-
-              if (extra_len > temp_len) break;
-
-              insert_at = UR(temp_len - extra_len + 1);
-              memcpy(out_buf + insert_at, extras[use_extra].data, extra_len);
-
-            }
-
-            break;
-
-          }
-
-        case 16: {
+        
+        case 17: {
             if (extras_cnt + a_extras_cnt == 0) break;
 
             u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
@@ -8406,41 +8441,6 @@ havoc_stage:
             break;
 
           }
-
-        /*******************************************************
-         * 新增变异算子: 消息覆盖 (MSG_OVERWRITE)       *
-         *******************************************************/
-        case 17: {
-          /* 前提条件: 至少需要两条消息 (一条源，一条目标) */
-          if (M2_region_count < 2) break;
-
-          u32 target_idx, src_idx;
-          u32 target_start, target_len;
-          u32 src_start, src_len;
-
-          /* 1. 随机选择源消息和目标消息 */
-          target_idx = UR(M2_region_count);
-          do {
-            src_idx = UR(M2_region_count);
-          } while (target_idx == src_idx);
-          
-          target_start = message_boundaries[target_idx];
-          target_len   = message_boundaries[target_idx + 1] - target_start;
-
-          src_start = message_boundaries[src_idx];
-          src_len   = message_boundaries[src_idx + 1] - src_start;
-
-          /* 2. 将源消息的内容覆盖到目标消息的位置 */
-          /* 我们只覆盖目标和源两者中较短的长度，以避免内存越界 */
-          u32 overwrite_len = MIN(target_len, src_len);
-          if (overwrite_len > 0) {
-            memcpy(out_buf + target_start, out_buf + src_start, overwrite_len);
-          }
-
-          /* 缓冲区总长度不变 */
-          break;
-        }
-        /* Values 18 to 25 can be selected only if region-level mutations are enabled */
 
         /* Replace the current region with a random region from a random seed */
         case 18: {
@@ -8712,7 +8712,7 @@ havoc_stage:
       }
       // *** THE FIX ***
       // If a structural mutation occurred, rescan and update our knowledge.
-      if (choice > 17) {
+      if (choice > 13) {
         rescan_and_update_boundaries(out_buf, temp_len, &message_boundaries, &M2_region_count);
       }
 
